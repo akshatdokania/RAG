@@ -11,6 +11,8 @@ from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.chains import create_history_aware_retriever, create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
+from pix2text import Pix2Text
+import tempfile
 
 # Load environment variables
 load_dotenv()
@@ -24,7 +26,6 @@ if "chat_history" not in st.session_state:
 # Streamlit app setup
 st.set_page_config(
     page_title="DS-120 Virtual Teaching Assistant Chatbot",
-    page_icon="🧑‍💼",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -48,20 +49,19 @@ llm = ChatOpenAI(model="gpt-4o-mini")
 
 # Define custom prompt template
 template = """
-       You are a teaching assistant for a Data Science course. Your role is to assist students with their queries by leveraging the provided context, while not helping them with assigment solutions. Always Ensure the response follows the below rules:
-    
-    1. Always analyse the metadata of the context chunks first .If in the file_name of metatadata it is mentioned "Do not answer", don't give the solution to anything related to that content because it is supposed to be a part of an assignment.
-    2. If there is nothing such mentioned in the metadta, Always Properly handle mathematical expressions and special characters:
-        - Always Inline mathematical equations must be wrapped with single dollar signs, e.g., `$a^2 + b^2 = c^2$`.
-        - Always Block-level equations must be wrapped with double dollar signs($$), e.g., `$$\int_a^b f(x) dx$$`.
-        - Always Escape any dollar signs (`$`) used in plain text by prefixing them with a backslash (`\$`).
-        - Always Use valid LaTeX syntax for mathematical expressions.
-        - Always Ensure Python code or inline formulas are enclosed within backticks, e.g., `` `[f""${{i}}"" for i in range(1,11)]` ``.
-    3.  Directly addresses the query while remaining clear, concise, and accurate.   
+       You are a teaching assistant for a Data Science course. Your role is to assist students with their queries by leveraging the provided context, while not helping them with assignment solutions. Always ensure the response follows the below rules:
 
-    
-    Never answer questions that are out of scope and do not relate directly to our data, politely respond that you have been trained to deal with questions only related to the subject DS-120.
-    Also keep the answers restricted to the scope of the subject, do not explain beyond.
+    1. Always analyze the metadata of the context chunks first. If in the file_name of metadata it is mentioned "Do not answer", don't give the solution to anything related to that content because it is supposed to be a part of an assignment.
+    2. If there is nothing such mentioned in the metadata, properly handle mathematical expressions and special characters:
+        - Inline mathematical equations must be wrapped with single dollar signs, e.g., `$a^2 + b^2 = c^2$`.
+        - Block-level equations must be wrapped with double dollar signs($$), e.g., `$$\int_a^b f(x) dx$$`.
+        - Escape any dollar signs (`$`) used in plain text by prefixing them with a backslash (`\\$`).
+        - Use valid LaTeX syntax for mathematical expressions.
+        - Ensure Python code or inline formulas are enclosed within backticks, e.g., `` `[f""${{i}}"" for i in range(1,11)]` ``.
+    3. Directly address the query while remaining clear, concise, and accurate.
+
+    Never answer questions that are out of scope and do not relate directly to our data. Politely respond that you have been trained to deal with questions only related to the subject DS-120.
+    Also keep the answers restricted to the scope of the subject; do not explain beyond.
 
     Context: {context}
     Question: {input}
@@ -118,34 +118,71 @@ def update_chat_history(chat_history, human_message, ai_message):
         chat_history = chat_history[-5:]
     return chat_history
 
-# Display chat messages
-for msg in st.session_state.messages:
-    st.chat_message(msg["role"]).write(msg["content"])
-
-# Chat input logic
-if prompt := st.chat_input("Type your question here..."):
-    # Add user input to the message history
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    st.chat_message("user").write(prompt)
-
+# Function to process uploaded image and extract text
+def process_uploaded_image(image):
     try:
-        # Get response from RAG chain
-        response = rag_chain.invoke({"input": prompt, "chat_history": st.session_state.chat_history})
+        with tempfile.NamedTemporaryFile(delete=True, suffix=".jpg") as temp_file:
+            temp_file.write(image.getvalue())
+            temp_file.flush()
 
-        # Update chat history
-        st.session_state.chat_history = update_chat_history(
-            st.session_state.chat_history,
-            prompt,
-            response["answer"]
-        )
+            # Initialize Pix2Text
+            p2t = Pix2Text.from_config(device="cpu")
 
-        # Add assistant response to messages
-        assistant_message = response["answer"]
-        st.session_state.messages.append({"role": "assistant", "content": assistant_message})
-        st.chat_message("assistant").write(assistant_message)
-
+            # Extract content from the image
+            recognized_content = p2t.recognize(temp_file.name)
+            return recognized_content
     except Exception as e:
-        # Handle errors gracefully
-        error_message = f"An error occurred: {str(e)}"
-        st.session_state.messages.append({"role": "assistant", "content": error_message})
-        st.chat_message("assistant").write(error_message)
+        st.error(f"Failed to process the image: {str(e)}")
+        return ""
+
+# Layout with a scrollable main area and fixed bottom
+container = st.container()
+bottom_container = st.empty()
+
+# Display chat messages in the scrollable main area
+with container:
+    for msg in st.session_state.messages:
+        st.chat_message(msg["role"]).write(msg["content"])
+
+# Create the pinned bottom layout for input and file upload
+with bottom_container.container():
+    col1, col2 = st.columns([1, 4])
+    with col1:
+        uploaded_file = st.file_uploader(label_visibility="hidden", label="Upload an image", key="file_uploader")
+
+        extracted_content = ""
+        if uploaded_file:
+            extracted_content = process_uploaded_image(uploaded_file)
+
+    with col2:
+        # Chat input logic
+        if prompt := st.chat_input("Type your question here..."):
+            # Append extracted content to the prompt if available
+            if extracted_content:
+                prompt = f"{prompt}\n\nExtracted Content:\n{extracted_content}"
+
+            # Add user input to the message history
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            st.chat_message("user").write(prompt)
+
+            try:
+                # Get response from RAG chain
+                response = rag_chain.invoke({"input": prompt, "chat_history": st.session_state.chat_history})
+
+                # Update chat history
+                st.session_state.chat_history = update_chat_history(
+                    st.session_state.chat_history,
+                    prompt,
+                    response["answer"]
+                )
+
+                # Add assistant response to messages
+                assistant_message = response["answer"]
+                st.session_state.messages.append({"role": "assistant", "content": assistant_message})
+                st.chat_message("assistant").write(assistant_message)
+
+            except Exception as e:
+                # Handle errors gracefully
+                error_message = f"An error occurred: {str(e)}"
+                st.session_state.messages.append({"role": "assistant", "content": error_message})
+                st.chat_message("assistant").write(error_message)
