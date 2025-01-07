@@ -135,20 +135,22 @@ def process_uploaded_image(image):
         st.error(f"Failed to process the image: {str(e)}")
         return ""
 
-# Layout with a scrollable main area and fixed bottom
-container = st.container()
-bottom_container = st.empty()
+# Define a scrollable main area for chat history and fixed bottom input area
+chat_container = st.container()
+input_container = st.empty()
 
-# Display chat messages in the scrollable main area
-with container:
-    for msg in st.session_state.messages:
-        st.chat_message(msg["role"]).write(msg["content"])
+# Display chat messages in the fixed top area
+with chat_container:
+    chat_messages = st.container()
+    with chat_messages:
+        for msg in st.session_state.messages:
+            st.chat_message(msg["role"]).write(msg["content"])
 
-# Create the pinned bottom layout for input and file upload
-with bottom_container.container():
+# Fixed bottom layout for file upload and chat input
+with input_container.container():
     col1, col2 = st.columns([1, 4])
     with col1:
-        uploaded_file = st.file_uploader(label_visibility="hidden", label="Upload an image", key="file_uploader")
+        uploaded_file = st.file_uploader(label_visibility="collapsed", label="Upload an image", key="file_uploader")
 
         extracted_content = ""
         if uploaded_file:
@@ -163,7 +165,8 @@ with bottom_container.container():
 
             # Add user input to the message history
             st.session_state.messages.append({"role": "user", "content": prompt})
-            st.chat_message("user").write(prompt)
+            with chat_messages:
+                st.chat_message("user").write(prompt)
 
             try:
                 # Get response from RAG chain
@@ -179,10 +182,13 @@ with bottom_container.container():
                 # Add assistant response to messages
                 assistant_message = response["answer"]
                 st.session_state.messages.append({"role": "assistant", "content": assistant_message})
-                st.chat_message("assistant").write(assistant_message)
+                with chat_messages:
+                    st.chat_message("assistant").write(assistant_message)
 
             except Exception as e:
                 # Handle errors gracefully
                 error_message = f"An error occurred: {str(e)}"
                 st.session_state.messages.append({"role": "assistant", "content": error_message})
-                st.chat_message("assistant").write(error_message)
+                with chat_messages:
+                    st.chat_message("assistant").write(error_message)
+
