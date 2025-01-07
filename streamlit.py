@@ -155,10 +155,20 @@ st.markdown(
        
         # padding: 10px; /* Optional: Add padding */
     }
-    .stFileUploader {
-        width: max-content /* Adjust height of the file uploader */
-        padding: 10px;
-
+    
+    [data-testid='stFileUploader'] {
+        width: max-content;
+    }
+    [data-testid='stFileUploader'] section {
+        padding: 0;
+        float: left;
+    }
+    [data-testid='stFileUploader'] section > input + div {
+        display: none;
+    }
+    [data-testid='stFileUploader'] section + div {
+        float: right;
+        padding-top: 0;
     }
 
     </style>
