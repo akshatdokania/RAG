@@ -136,8 +136,8 @@ def process_uploaded_image(image):
         return ""
 
 # Define a scrollable main area for chat history and fixed bottom input area
-chat_container = st.container()
-input_container = st.empty()
+chat_container = st.container(height = 400)
+input_container = st.container()
 
 # Display chat messages in the fixed top area
 with chat_container:
@@ -146,10 +146,32 @@ with chat_container:
         for msg in st.session_state.messages:
             st.chat_message(msg["role"]).write(msg["content"])
 
+
+st.markdown(
+    """
+    <style>
+    .custom-col {
+        height: 100px; /* Adjust the height as needed */
+       
+        # padding: 10px; /* Optional: Add padding */
+    }
+    .stFileUploader {
+        width: max-content /* Adjust height of the file uploader */
+        padding: 10px;
+
+    }
+
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
 # Fixed bottom layout for file upload and chat input
 with input_container.container():
     col1, col2 = st.columns([1, 4])
     with col1:
+        st.markdown('<div class="stFileUploader">', unsafe_allow_html=True)
         uploaded_file = st.file_uploader(label_visibility="collapsed", label="Upload an image", key="file_uploader")
 
         extracted_content = ""
@@ -158,6 +180,7 @@ with input_container.container():
 
     with col2:
         # Chat input logic
+        st.markdown('<div class="custom-col">', unsafe_allow_html=True)
         if prompt := st.chat_input("Type your question here..."):
             # Append extracted content to the prompt if available
             if extracted_content:
