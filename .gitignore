@@ -4,3 +4,7 @@
 .venv/
 
 __pycache__/
+streamlit.py
+streamlit_backup.py
+experiments.py
+hello.py

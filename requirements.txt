@@ -3,6 +3,8 @@ streamlit-chat
 python-dotenv
 langchain
 openai
+torch
+pytesseract
 langchain-core
 langchain-openai
 langchain-community
@@ -11,6 +13,7 @@ sentence-transformers
 faiss-cpu
 setuptools
 wheel
+opencv-python
 langsmith
 datasets
 pix2text
