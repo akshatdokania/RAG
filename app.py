@@ -80,39 +80,39 @@ st.markdown("<h1 style='text-align: center;'>DS-120 Virtual Teaching Assistant C
 
 
 def preprocess_latex_in_response(response):
-    # """
-    # Detect unformatted LaTeX-style expressions and process them,
-    # while skipping already valid LaTeX math and avoiding over-wrapping.
-    # """
-    # # Regex to detect unformatted LaTeX-style expressions (e.g., (theta), (x^i))
-    # # Avoids already valid `$ ... $` or `$$ ... $$`
-    # equation_pattern = r"(?<!\$)\(([\\a-zA-Z0-9_^,]+)\)(?!\$)"  # Detect math in parentheses
+    """
+    Detect unformatted LaTeX-style expressions and process them,
+    while skipping already valid LaTeX math and avoiding over-wrapping.
+    """
+    # Regex to detect unformatted LaTeX-style expressions (e.g., (theta), (x^i))
+    # Avoids already valid `$ ... $` or `$$ ... $$`
+    equation_pattern = r"(?<!\$)\(([\\a-zA-Z0-9_^,]+)\)(?!\$)"  # Detect math in parentheses
 
-    # # Skip already valid inline or block LaTeX
-    # valid_math_pattern = r"(\$\$.*?\$\$|\$.*?\$)"  # Matches valid `$ ... $` or `$$ ... $$`
+    # Skip already valid inline or block LaTeX
+    valid_math_pattern = r"(\$\$.*?\$\$|\$.*?\$)"  # Matches valid `$ ... $` or `$$ ... $$`
     
-    # # Placeholder for valid LaTeX to prevent modification
-    # valid_math_placeholders = []
-    # response_with_placeholders = response
+    # Placeholder for valid LaTeX to prevent modification
+    valid_math_placeholders = []
+    response_with_placeholders = response
 
-    # # Replace valid math blocks with placeholders
-    # for match in re.finditer(valid_math_pattern, response):
-    #     placeholder = f"__VALID_MATH_{len(valid_math_placeholders)}__"
-    #     valid_math_placeholders.append(match.group(0))
-    #     response_with_placeholders = response_with_placeholders.replace(match.group(0), placeholder, 1)
+    # Replace valid math blocks with placeholders
+    for match in re.finditer(valid_math_pattern, response):
+        placeholder = f"__VALID_MATH_{len(valid_math_placeholders)}__"
+        valid_math_placeholders.append(match.group(0))
+        response_with_placeholders = response_with_placeholders.replace(match.group(0), placeholder, 1)
 
-    # # Process remaining parts of the response for unformatted math
-    # def format_equation(match):
-    #     equation = match.group(1)  # Extract content inside parentheses
-    #     return f"$$ {equation} $$"  # Wrap in $$ for block rendering
+    # Process remaining parts of the response for unformatted math
+    def format_equation(match):
+        equation = match.group(1)  # Extract content inside parentheses
+        return f"$$ {equation} $$"  # Wrap in $$ for block rendering
 
-    # processed_response = re.sub(equation_pattern, format_equation, response_with_placeholders)
+    processed_response = re.sub(equation_pattern, format_equation, response_with_placeholders)
 
-    # # Restore valid math blocks from placeholders
-    # for i, valid_math in enumerate(valid_math_placeholders):
-    #     processed_response = processed_response.replace(f"__VALID_MATH_{i}__", valid_math, 1)
+    # Restore valid math blocks from placeholders
+    for i, valid_math in enumerate(valid_math_placeholders):
+        processed_response = processed_response.replace(f"__VALID_MATH_{i}__", valid_math, 1)
 
-    return response
+    return processed_response
 
 # Initialize SentenceTransformer model for embeddings
 modelPath = "sentence-transformers/all-MiniLM-l6-v2"
