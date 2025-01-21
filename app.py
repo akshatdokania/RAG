@@ -458,29 +458,34 @@ with st.container():
     # File uploader logic
     with col1:
         st.markdown('<div class="stFileUploader">', unsafe_allow_html=True)
-        uploaded_file = st.file_uploader(label_visibility="collapsed", label="Upload an image", key="file_uploader")
+        uploaded_file = st.file_uploader(label_visibility="collapsed", label="Upload an image", key="file_uploader",type=['png','pdf'])
         extracted_content = ""
         if uploaded_file:
             extracted_content = process_uploaded_image(uploaded_file)
 
     # Chat input logic
+    # Chat input logic
     with col2:
         st.markdown('<div class="custom-col">', unsafe_allow_html=True)
         if prompt := st.chat_input("Type your question here..."):
-            # Append extracted content to the prompt if available
+            # Check if an image is uploaded and extract content
             if extracted_content:
-                prompt = f"{prompt} \n\n {extracted_content}"
+                # Append "Attachment" to the user's input for UI display
+                ui_display_prompt = f"{prompt} \n\n[Attachment]"
+                # Append the extracted content to the prompt for LLM
+                prompt = f"{prompt}\n\n{extracted_content}"
+            else:
+                # No image attached, use the prompt as is
+                ui_display_prompt = prompt
 
-            # Add user input to the message history
-            st.session_state.messages.append({"role": "user", "content": prompt})
+            # Add user input (with "Attachment" if applicable) to the message history
+            st.session_state.messages.append({"role": "user", "content": ui_display_prompt})
             with chat_messages:
-                st.chat_message("user").write(prompt)
+                st.chat_message("user").write(ui_display_prompt)
                 # Use a placeholder for "Thinking..."
                 thinking_placeholder = st.empty()  # Create a placeholder dynamically
                 with thinking_placeholder:
-                    st.chat_message("assistant").write("Thinking...")  # Display "Thinking..."  
-
-            
+                    st.chat_message("assistant").write("Thinking...")  # Display "Thinking..."
 
             # Generate response for the current query
             try:
@@ -516,8 +521,3 @@ with st.container():
                 st.session_state.messages.append({"role": "assistant", "content": error_message})
                 with chat_messages:
                     st.chat_message("assistant").write(error_message)
-
-                    st.chat_message("assistant").write(error_message)
-
-
-            
