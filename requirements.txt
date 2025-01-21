@@ -9,5 +9,8 @@ langchain-community
 huggingface-hub
 sentence-transformers
 faiss-cpu
-pix2text
+setuptools
+wheel
 langsmith
+datasets
+pix2text
