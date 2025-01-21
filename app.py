@@ -16,12 +16,28 @@ from pix2text import Pix2Text
 import tempfile
 import re
 
-os.environ["LANGSMITH_TRACING_V2"] = "true"
-os.environ["LANGSMITH_API_KEY"] = "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"  # Replace with your actual API key
-os.environ["LANGSMITH_PROJECT"] = "TutorBot"
-
 # Load environment variables
 load_dotenv()
+
+
+os.environ["LANGSMITH_TRACING_V2"] = "true"
+os.environ["LANGSMITH_PROJECT"] = "TutorBot"
+
+# Load API keys from secrets.toml
+# Correct key names based on secrets.toml
+openai_key = st.secrets["api_keys"]["OPENAI_API_KEY"]
+langsmith_key = st.secrets["api_keys"]["LANGSMITH_API_KEY"]
+
+os.environ["OPENAI_API_KEY"] = openai_key
+os.environ["LANGSMITH_API_KEY"] = langsmith_key  # Set the LangSmith API key
+
+# Load prompts from secrets.toml
+contextualize_q_system_prompt = st.secrets["ds120_prompts"]["contextualize_q_system_prompt"]
+qa_prompt_template = st.secrets["ds120_prompts"]["qa_prompt_template"]
+
+
+
+
 
 @traceable
 def invoke_rag_chain(prompt: str, chat_history: list):
@@ -64,39 +80,39 @@ st.markdown("<h1 style='text-align: center;'>DS-120 Virtual Teaching Assistant C
 
 
 def preprocess_latex_in_response(response):
-    """
-    Detect unformatted LaTeX-style expressions and process them,
-    while skipping already valid LaTeX math and avoiding over-wrapping.
-    """
-    # Regex to detect unformatted LaTeX-style expressions (e.g., (theta), (x^i))
-    # Avoids already valid `$ ... $` or `$$ ... $$`
-    equation_pattern = r"(?<!\$)\(([\\a-zA-Z0-9_^,]+)\)(?!\$)"  # Detect math in parentheses
+    # """
+    # Detect unformatted LaTeX-style expressions and process them,
+    # while skipping already valid LaTeX math and avoiding over-wrapping.
+    # """
+    # # Regex to detect unformatted LaTeX-style expressions (e.g., (theta), (x^i))
+    # # Avoids already valid `$ ... $` or `$$ ... $$`
+    # equation_pattern = r"(?<!\$)\(([\\a-zA-Z0-9_^,]+)\)(?!\$)"  # Detect math in parentheses
 
-    # Skip already valid inline or block LaTeX
-    valid_math_pattern = r"(\$\$.*?\$\$|\$.*?\$)"  # Matches valid `$ ... $` or `$$ ... $$`
+    # # Skip already valid inline or block LaTeX
+    # valid_math_pattern = r"(\$\$.*?\$\$|\$.*?\$)"  # Matches valid `$ ... $` or `$$ ... $$`
     
-    # Placeholder for valid LaTeX to prevent modification
-    valid_math_placeholders = []
-    response_with_placeholders = response
+    # # Placeholder for valid LaTeX to prevent modification
+    # valid_math_placeholders = []
+    # response_with_placeholders = response
 
-    # Replace valid math blocks with placeholders
-    for match in re.finditer(valid_math_pattern, response):
-        placeholder = f"__VALID_MATH_{len(valid_math_placeholders)}__"
-        valid_math_placeholders.append(match.group(0))
-        response_with_placeholders = response_with_placeholders.replace(match.group(0), placeholder, 1)
+    # # Replace valid math blocks with placeholders
+    # for match in re.finditer(valid_math_pattern, response):
+    #     placeholder = f"__VALID_MATH_{len(valid_math_placeholders)}__"
+    #     valid_math_placeholders.append(match.group(0))
+    #     response_with_placeholders = response_with_placeholders.replace(match.group(0), placeholder, 1)
 
-    # Process remaining parts of the response for unformatted math
-    def format_equation(match):
-        equation = match.group(1)  # Extract content inside parentheses
-        return f"$$ {equation} $$"  # Wrap in $$ for block rendering
+    # # Process remaining parts of the response for unformatted math
+    # def format_equation(match):
+    #     equation = match.group(1)  # Extract content inside parentheses
+    #     return f"$$ {equation} $$"  # Wrap in $$ for block rendering
 
-    processed_response = re.sub(equation_pattern, format_equation, response_with_placeholders)
+    # processed_response = re.sub(equation_pattern, format_equation, response_with_placeholders)
 
-    # Restore valid math blocks from placeholders
-    for i, valid_math in enumerate(valid_math_placeholders):
-        processed_response = processed_response.replace(f"__VALID_MATH_{i}__", valid_math, 1)
+    # # Restore valid math blocks from placeholders
+    # for i, valid_math in enumerate(valid_math_placeholders):
+    #     processed_response = processed_response.replace(f"__VALID_MATH_{i}__", valid_math, 1)
 
-    return processed_response
+    return response
 
 # Initialize SentenceTransformer model for embeddings
 modelPath = "sentence-transformers/all-MiniLM-l6-v2"
@@ -111,71 +127,17 @@ vectordb = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deseriali
 retriever = vectordb.as_retriever(search_type="similarity", search_kwargs={"k": 4})
 
 # Initialize OpenAI model
-llm = ChatOpenAI(model="gpt-4o-mini")
+llm = ChatOpenAI(model="gpt-4o-mini",api_key=os.environ["OPENAI_API_KEY"])
 
-# Define custom prompt template
-template = """
-       You are a knowledgeable and empathetic teaching assistant for the DS-120 Data Science course, designed to teach fundamental concepts of Data Science. Your primary role is to assist students with queries strictly within the course scope.
-            ### Guidelines:
-
-            1. Scope of Assistance:
-            
-            - Focus exclusively on fundamental concepts of Data Science covered in DS-120(limited to the scope of the context). This course is a foundational course, no coding knowledge(python or any other language) is to be imparted.
-            - For questions that require solving, in no circumstance can you solve those questions, as your role is just to improve conceptual knowledge. Consider giving a clearer understanding of the question, or explaining the underlying concepts of the question, but don not solve and give final answer. 
-            - For queries beyond the scope, politely indicate that this a bot trained to deal with this subject's queries only.
-            - For trivial questions, consider replying in a way that the question is answered without harming the sentiments of the user.
-
-
-            2. Mathematical and Special Characters:
-            
-            - Inline mathematical equations must be wrapped with single dollar signs, e.g., $a^2 + b^2 = c^2$.
-                    - Block-level equations must be wrapped with double dollar signs($$), e.g., $$\int_a^b f(x) dx$$.
-                    - Escape any dollar signs ($) used in plain text by prefixing them with a backslash (\\$).
-                    - Use valid LaTeX syntax for mathematical expressions.
-                    - Make sure that the mathematical equations are properly matched and formatted mathematical delimiters, particularly the single dollar signs $ and parentheses.
-
-
-            3. Problem-Solving Approach:
-            - Direct Responses: For clear, straightforward questions, provide concise answers within the scope.
-            - Step-by-Step Solutions: For complex queries, break them into smaller parts and answer each step logically.
-            - Start with simple explanations and gradually include technical details.
-
-            4. Leveraging Context:
-            - Use context provided in the query to supplement your answer.
-            - If context is insufficient, ask clarifying questions.
-
-            5. Follow Up Questions: 
-            - If there is a followup question, consider explaining the concept in greater detail to ensure clarity is provided
-
-            5. Clarity and Readability:
-            - Use simple language and examples for better understanding.
-            - Format responses with bullet points, numbered lists, and concise paragraphs.
-            - The equations should be in a latex friendly format.
-
-            6. Tone and Presentation**:
-            - Maintain a friendly, professional, and encouraging tone.
-            - Avoid referring to external datasets or corpora. Present yourself as specifically trained for DS-120.
-
-        Context: {context}  
-        Question: {input}
-
-"""
-
-# Define the system prompt
-contextualize_q_system_prompt = (
-    "Given a chat history and the latest user question "
-    "which might reference context in the chat history, "
-    "formulate a standalone question which can be understood "
-    "without the chat history. Do NOT answer the question, "
-    "just reformulate it if needed and otherwise return it as is."
-)
+contextualize_q_system_prompt = st.secrets["ds120_prompts"]["contextualize_q_system_prompt"]
+qa_prompt_template = st.secrets["ds120_prompts"]["qa_prompt_template"]
 
 # Define contextualize prompt
 contextualize_q_prompt = ChatPromptTemplate.from_messages(
     [
         ("system", contextualize_q_system_prompt),
-        MessagesPlaceholder(variable_name="chat_history"),  # Correct variable naming
-        ("human", "{input}"),  # Updated to match the expected variable name
+        MessagesPlaceholder(variable_name="chat_history"),
+        ("human", "{input}"),
     ]
 )
 
@@ -187,9 +149,9 @@ history_aware_retriever = create_history_aware_retriever(
 # Define the question-answering system prompt
 qa_prompt = ChatPromptTemplate.from_messages(
     [
-        ("system", template),
-        MessagesPlaceholder(variable_name="chat_history"),  # Correct variable naming
-        ("human", "{input}"),  # Updated to match the expected variable name
+        ("system", qa_prompt_template),
+        MessagesPlaceholder(variable_name="chat_history"),
+        ("human", "{input}"),
     ]
 )
 
