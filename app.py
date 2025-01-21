@@ -1,81 +1,561 @@
-import chainlit as cl
 import os
-import json
-from langchain.schema import Document
-from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import FAISS
-from langchain_openai import ChatOpenAI
-from langchain.chains import ConversationalRetrievalChain
-from langchain.memory import ConversationBufferMemory
-from langchain_core.prompts import ChatPromptTemplate
-
+import streamlit as st
 from dotenv import load_dotenv
-import os
+from langchain_core.prompts import PromptTemplate
+from langchain.embeddings import HuggingFaceEmbeddings
+from langchain_openai import ChatOpenAI
+from langchain_community.vectorstores import FAISS
+from langchain.chains import LLMChain
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain.chains import create_history_aware_retriever, create_retrieval_chain
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langsmith import traceable
+from pix2text import Pix2Text
+import tempfile
+import re
 
+os.environ["LANGSMITH_TRACING_V2"] = "true"
+os.environ["LANGSMITH_API_KEY"] = "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"  # Replace with your actual API key
+os.environ["LANGSMITH_PROJECT"] = "TutorBot"
+
+# Load environment variables
 load_dotenv()
 
-# Setup LangChain model and embeddings
+@traceable
+def invoke_rag_chain(prompt: str, chat_history: list):
+    response = rag_chain.invoke({"input": prompt, "chat_history": chat_history})
+    return response
+
+def preprocess_latex_in_response(response):
+    """
+    Detect and format LaTeX-like expressions while skipping plain text and already valid LaTeX.
+    """
+    # Regex to match LaTeX-like content inside parentheses
+    # Includes symbols (\alpha, \hat{y}_i), sub/superscripts (_i, ^2), and braces ({res})
+    equation_pattern = r"\((\\[a-zA-Z]+(?:_[a-zA-Z0-9]+)?(?:\^\{?[a-zA-Z0-9]+\}?)?(?:,\s*\\[a-zA-Z]+)*)\)"
+
+    # Function to format detected LaTeX expressions
+    def format_equation(match):
+        equation = match.group(1)  # Extract content inside parentheses
+        return f"$$ {equation} $$"  # Wrap in $$ for block rendering
+
+    # Skip already formatted LaTeX (e.g., $$...$$) by checking for $$ and applying selectively
+    processed_response = re.sub(equation_pattern, format_equation, response)
+
+    return processed_response
+
+# Initialize session state
+if "messages" not in st.session_state:
+    st.session_state["messages"] = []  # Initialize the message history
+if "chat_history" not in st.session_state:
+    st.session_state["chat_history"] = []  # Initialize the chat history
+
+# Streamlit app setup
+st.set_page_config(
+    page_title="DS-120 Virtual Teaching Assistant Chatbot",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+st.markdown("<h1 style='text-align: center;'>DS-120 Virtual Teaching Assistant Chatbot</h1>", unsafe_allow_html=True)
+
+
+
+def preprocess_latex_in_response(response):
+    """
+    Detect unformatted LaTeX-style expressions and process them,
+    while skipping already valid LaTeX math and avoiding over-wrapping.
+    """
+    # Regex to detect unformatted LaTeX-style expressions (e.g., (theta), (x^i))
+    # Avoids already valid `$ ... $` or `$$ ... $$`
+    equation_pattern = r"(?<!\$)\(([\\a-zA-Z0-9_^,]+)\)(?!\$)"  # Detect math in parentheses
+
+    # Skip already valid inline or block LaTeX
+    valid_math_pattern = r"(\$\$.*?\$\$|\$.*?\$)"  # Matches valid `$ ... $` or `$$ ... $$`
+    
+    # Placeholder for valid LaTeX to prevent modification
+    valid_math_placeholders = []
+    response_with_placeholders = response
+
+    # Replace valid math blocks with placeholders
+    for match in re.finditer(valid_math_pattern, response):
+        placeholder = f"__VALID_MATH_{len(valid_math_placeholders)}__"
+        valid_math_placeholders.append(match.group(0))
+        response_with_placeholders = response_with_placeholders.replace(match.group(0), placeholder, 1)
+
+    # Process remaining parts of the response for unformatted math
+    def format_equation(match):
+        equation = match.group(1)  # Extract content inside parentheses
+        return f"$$ {equation} $$"  # Wrap in $$ for block rendering
+
+    processed_response = re.sub(equation_pattern, format_equation, response_with_placeholders)
+
+    # Restore valid math blocks from placeholders
+    for i, valid_math in enumerate(valid_math_placeholders):
+        processed_response = processed_response.replace(f"__VALID_MATH_{i}__", valid_math, 1)
+
+    return processed_response
+
+# Initialize SentenceTransformer model for embeddings
 modelPath = "sentence-transformers/all-MiniLM-l6-v2"
 embeddings = HuggingFaceEmbeddings(
     model_name=modelPath,
-    model_kwargs={'device': 'cpu'},
-    encode_kwargs={'normalize_embeddings': False}
+    model_kwargs={"device": "cpu"},
+    encode_kwargs={"normalize_embeddings": False},
 )
 
-# Load chunks from JSON
-def load_documents_from_json(json_file="chunks.json"):
-    with open(json_file, "r", encoding="utf-8") as f:
-        data = json.load(f)["chunks"]
-    documents = [
-        Document(page_content=chunk["content"], metadata={"id": chunk["id"]})
-        for chunk in data if chunk["content"].strip()
+# Load FAISS vector store
+vectordb = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deserialization=True)
+retriever = vectordb.as_retriever(search_type="similarity", search_kwargs={"k": 4})
+
+# Initialize OpenAI model
+llm = ChatOpenAI(model="gpt-4o-mini")
+
+# Define custom prompt template
+template = """
+       You are a knowledgeable and empathetic teaching assistant for the DS-120 Data Science course, designed to teach fundamental concepts of Data Science. Your primary role is to assist students with queries strictly within the course scope.
+            ### Guidelines:
+
+            1. Scope of Assistance:
+            
+            - Focus exclusively on fundamental concepts of Data Science covered in DS-120(limited to the scope of the context). This course is a foundational course, no coding knowledge(python or any other language) is to be imparted.
+            - For questions that require solving, in no circumstance can you solve those questions, as your role is just to improve conceptual knowledge. Consider giving a clearer understanding of the question, or explaining the underlying concepts of the question, but don not solve and give final answer. 
+            - For queries beyond the scope, politely indicate that this a bot trained to deal with this subject's queries only.
+            - For trivial questions, consider replying in a way that the question is answered without harming the sentiments of the user.
+
+
+            2. Mathematical and Special Characters:
+            
+            - Inline mathematical equations must be wrapped with single dollar signs, e.g., $a^2 + b^2 = c^2$.
+                    - Block-level equations must be wrapped with double dollar signs($$), e.g., $$\int_a^b f(x) dx$$.
+                    - Escape any dollar signs ($) used in plain text by prefixing them with a backslash (\\$).
+                    - Use valid LaTeX syntax for mathematical expressions.
+                    - Make sure that the mathematical equations are properly matched and formatted mathematical delimiters, particularly the single dollar signs $ and parentheses.
+
+
+            3. Problem-Solving Approach:
+            - Direct Responses: For clear, straightforward questions, provide concise answers within the scope.
+            - Step-by-Step Solutions: For complex queries, break them into smaller parts and answer each step logically.
+            - Start with simple explanations and gradually include technical details.
+
+            4. Leveraging Context:
+            - Use context provided in the query to supplement your answer.
+            - If context is insufficient, ask clarifying questions.
+
+            5. Follow Up Questions: 
+            - If there is a followup question, consider explaining the concept in greater detail to ensure clarity is provided
+
+            5. Clarity and Readability:
+            - Use simple language and examples for better understanding.
+            - Format responses with bullet points, numbered lists, and concise paragraphs.
+            - The equations should be in a latex friendly format.
+
+            6. Tone and Presentation**:
+            - Maintain a friendly, professional, and encouraging tone.
+            - Avoid referring to external datasets or corpora. Present yourself as specifically trained for DS-120.
+
+        Context: {context}  
+        Question: {input}
+
+"""
+
+# Define the system prompt
+contextualize_q_system_prompt = (
+    "Given a chat history and the latest user question "
+    "which might reference context in the chat history, "
+    "formulate a standalone question which can be understood "
+    "without the chat history. Do NOT answer the question, "
+    "just reformulate it if needed and otherwise return it as is."
+)
+
+# Define contextualize prompt
+contextualize_q_prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", contextualize_q_system_prompt),
+        MessagesPlaceholder(variable_name="chat_history"),  # Correct variable naming
+        ("human", "{input}"),  # Updated to match the expected variable name
     ]
-    print(f"Loaded {len(documents)} documents from {json_file}")
-    return documents
+)
 
-@cl.on_chat_start
-async def start_chat():
-    global rag_chain
+# Create a history-aware retriever
+history_aware_retriever = create_history_aware_retriever(
+    llm, retriever, contextualize_q_prompt
+)
+
+# Define the question-answering system prompt
+qa_prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", template),
+        MessagesPlaceholder(variable_name="chat_history"),  # Correct variable naming
+        ("human", "{input}"),  # Updated to match the expected variable name
+    ]
+)
+
+# Create a question-answer chain
+question_answer_chain = create_stuff_documents_chain(llm, qa_prompt)
+
+# Create a RAG chain
+rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
+
+# Function to manage chat history and keep the latest 5 messages
+def update_chat_history(chat_history, human_message, ai_message):
+    chat_history.extend(
+        [
+            HumanMessage(content=human_message),
+            AIMessage(content=ai_message),
+        ]
+    )
+    # Keep only the last 5 messages
+    if len(chat_history) > 5:
+        chat_history = chat_history[-5:]
+    return chat_history
+
+# Function to process uploaded image and extract text
+def process_uploaded_image(image):
+    try:
+        with tempfile.NamedTemporaryFile(delete=True, suffix=".jpg") as temp_file:
+            temp_file.write(image.getvalue())
+            temp_file.flush()
+
+            # Initialize Pix2Text
+            p2t = Pix2Text.from_config(device="cpu")
+
+            # Extract content from the image
+            recognized_content = p2t.recognize(temp_file.name)
+            return recognized_content
+    except Exception as e:
+        st.error(f"Failed to process the image: {str(e)}")
+        return ""
+
+# Define a scrollable main area for chat history and fixed bottom input area
+# chat_container = st.container(height = 500)
+# input_container = st.container()
+
+# Display chat messages in the fixed top area
+with st.container(height = 600):
+    chat_messages = st.container()
+    with chat_messages:
+        for msg in st.session_state.messages:
+            st.chat_message(msg["role"]).write(msg["content"])
+
+st.markdown(
+    """
+    <style>
+    /* Target and remove borders from the chat history container */
+    [data-testid="stVerticalBlockBorderWrapper"] { 
+        border: none !important; /* Completely removes the border */
+        box-shadow: none !important; /* Removes any shadow that might resemble a border */
+    }
+    .stElementContainer.element-container:empty {
+    display: none !important; /* Completely remove the element visually */
+}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+     
+
+st.markdown(
+    """
+<style>
+/* Explicitly isolate the enclosing box */
+[data-testid="stHorizontalBlock"] {
+    position: fixed;
+    bottom: 10px; /* Keep glued to the bottom */
+    left: 50%;
+    transform: translateX(-50%);
+    width: 80%;
+    z-index: 1000; /* Ensure visibility above other elements */
+    background: rgba(13,17,24,255);
+    color: white;
+    padding: 0; /* Reset all padding */
+    padding-bottom: 10px;
+    padding-left: 10px;
+    border-radius: 15px;
+    display: flex;
+    flex-direction: column;
+    gap: 0px; /* Remove gap between file uploader and input box */
+    justify-content: flex-start;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+}
+
+/* Ensure children are isolated inside the enclosing block */
+[data-testid="stHorizontalBlock"] > * {
+    margin: 0;
+    padding: 0;
+}
+
+/* Optional: Debugging overflow issues (ensures children don't escape) */
+[data-testid="stHorizontalBlock"] {
+    overflow: hidden;
+}
+
+</style>
+
+    """,
+    unsafe_allow_html=True,
+)
+
+
+
+st.markdown(
+    """
+    <style>
+    /* Set the same background color for both user and AI chat messages */
+    [data-testid="stChatMessage"] {
+        background: rgba(13,17,24,255) !important; /* Apply the same background color */
+        color: white !important; /* Ensure text is readable against the dark background */
+        border: none !important; /* Optional: Remove borders if any */
+        box-shadow: none !important; /* Optional: Remove shadows */
+        padding: 10px; /* Optional: Add some inner spacing for better appearance */
+        border-radius: 10px
+        ; /* Optional: Add rounded corners */
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+st.markdown(
+    """
+    <style>
+/* Chat message - Always white background without borders */
+[data-testid="stChatMessage"] {
+    background: #ffffff !important; /* White background */
+    color: #000000 !important; /* Black text for readability */
+    padding: 10px; 
+    border-radius: 10px; /* Rounded corners */
+    border: none !important; /* No borders */
+    box-shadow: none !important; /* No shadows */
+}
+
+/* User message with white background in light mode */
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) .stMarkdownContainer {
+    background-color: #ffffff; /* White background */
+    color: #000000; /* Black text */
+    border-radius: 10px 10px 0px 10px; /* Rounded corners */
+    padding: 10px; 
+    border: none !important; /* No borders */
+    box-shadow: none !important; /* No shadows */
+}
+
+/* Assistant message with white background in light mode */
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]) .stMarkdownContainer {
+    background-color: #ffffff; /* White background */
+    color: #000000; /* Black text */
+    border-radius: 10px 10px 10px 0px; /* Rounded corners */
+    padding: 10px; 
+    border: none !important; /* No borders */
+    box-shadow: none !important; /* No shadows */
+}
+
+/* Input box and file uploader container - Light mode */
+[data-testid="stHorizontalBlock"] {
+    position: fixed;
+    bottom: 10px; /* Glued to the bottom */
+    left: 50%;
+    transform: translateX(-50%);
+    width: 80%;
+    z-index: 1000;
+    background: #ffffff; /* White for light mode */
+    color: #000000; /* Black font color */
+    padding: 15px; /* Extra padding for a clean look */
+    border-radius: 15px; /* Rounded corners */
+    border: none !important; /* No borders */
+    box-shadow: none !important; /* No shadows */
+    transition: background-color 0.3s ease, color 0.3s ease; /* Smooth transition */
+}
+
+/* Dark mode */
+@media (prefers-color-scheme: dark) {
+    body {
+        background-color: #121212; /* Dark background */
+        color: #ffffff; /* Light text */
+    }
+
+    /* Chat message box - Dark mode */
+    [data-testid="stChatMessage"] {
+        background: rgba(13, 17, 24, 255) !important; /* Dark background */
+        color: #ffffff !important; /* White text for readability */
+    }
+
+    [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) .stMarkdownContainer {
+        background-color: rgba(13, 17, 24, 255) !important; /* Dark background for user messages */
+        color: #ffffff; /* White text */
+    }
+
+    [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]) .stMarkdownContainer {
+        background-color: rgba(13, 17, 24, 255) !important; /* Dark background for assistant messages */
+        color: #ffffff; /* White text */
+    }
+
+    /* Horizontal block - Dark mode */
+    [data-testid="stHorizontalBlock"] {
+        background: rgba(13, 17, 24, 255); /* Dark background */
+        color: #ffffff; /* White text */
+        border: none !important; /* No borders */
+        box-shadow: none !important; /* No shadows */
+    }
+}
+</style>
+
+    """,
+    unsafe_allow_html=True,
+)
+
+st.markdown(
+    """
+    <style>
+    .input-container {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        width: 100%; /* Make it span the full width of the screen */
+        padding: 10px; /* Optional: Add some padding */
+        /* Use flexbox for layout */
+        gap: 0px; /* Add space between items */
+        align-items: center; /* Vertically align items */
+        
+    }
+    .custom-col {
+       /* Adjust the height as needed */
+        
+        /* padding: 10px; */
+    }
     
-    # Load documents and create vector store
-    documents = load_documents_from_json()
-    vector_store = FAISS.from_documents(documents, embeddings)
-    retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 4})
+    [data-testid='stFileUploader'] {
+        width: max-content;
+        
+    }
+    [data-testid='stFileUploader'] section {
+        padding: 0;
+        float: left;
+        
+    }
+    [data-testid='stFileUploader'] section > input + div {
+        display: none;
+    }
+    [data-testid='stFileUploader'] section + div {
+        float: right;
+        padding-top: 0;
+        
+    }
 
-    # Setup LLM and conversation chain
-    llm = ChatOpenAI(model="gpt-4o-mini")
-    memory = ConversationBufferMemory(
-        memory_key="chat_history",
-        output_key="answer",
-        return_messages=True,
-    )
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
-    system_prompt = (
-        "You are a teaching assistant for a Data Science course. Your role is to assist students with their queries "
-        "by leveraging the provided context. Use the retrieved information below to formulate clear, concise, and accurate responses."
-    )
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", system_prompt),
-        ("human", "{input}"),
-    ])
+st.markdown(
+    """
+    <style>
+    /* Align user messages and avatars to the right */
+    [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {
+        justify-content: flex-end; /* Align the container to the right */
+        text-align: right; /* Ensure text is aligned right */
+        flex-direction: row-reverse; /* Flip the order of avatar and message */
+    }
 
-    rag_chain = ConversationalRetrievalChain.from_llm(
-        llm=llm,
-        retriever=retriever,
-        memory=memory,
-        chain_type="stuff",
-        return_source_documents=True,
-    )
+    /* User avatar styling */
+    [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) [data-testid="stChatMessageAvatarUser"] {
+        margin-left: 10px; /* Add spacing between avatar and message */
+        margin-right: 0; /* Remove spacing on the right */
+    }
 
-    await cl.Message(content="Vector Store and RAG chain are ready! You can now ask questions.").send()
+    /* User message styling */
+    [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) .stMarkdownContainer {
+        background-color: #1E90FF; /* Light blue background */
+        color: white; /* White text color */
+        border-radius: 10px 10px 0px 10px; /* Rounded corners */
+        padding: 10px; /* Add padding */
+    }
 
-@cl.on_message
-async def handle_question(message):
-    global rag_chain
-    if not rag_chain:
-        await cl.Message(content="RAG pipeline is not initialized. Please wait.").send()
-        return
+    /* Assistant message styling remains default */
+    [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]) {
+        justify-content: flex-start; /* Keep assistant messages on the left */
+    }
 
-    res = await rag_chain.acall(message.content)
-    answer = res["answer"]
-    await cl.Message(content=answer).send()
+    [data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]) .stMarkdownContainer {
+        background-color: #333; /* Default dark background */
+        color: white; /* White text color */
+        border-radius: 10px 10px 10px 0px; /* Rounded corners */
+        padding: 10px; /* Add padding */
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# Fixed bottom layout for file upload and chat input
+with st.container():
+    st.markdown('<div class="input-container">', unsafe_allow_html=True)
+    col1, col2 = st.columns([1, 10])
+
+    # File uploader logic
+    with col1:
+        st.markdown('<div class="stFileUploader">', unsafe_allow_html=True)
+        uploaded_file = st.file_uploader(label_visibility="collapsed", label="Upload an image", key="file_uploader")
+        extracted_content = ""
+        if uploaded_file:
+            extracted_content = process_uploaded_image(uploaded_file)
+
+    # Chat input logic
+    with col2:
+        st.markdown('<div class="custom-col">', unsafe_allow_html=True)
+        if prompt := st.chat_input("Type your question here..."):
+            # Append extracted content to the prompt if available
+            if extracted_content:
+                prompt = f"{prompt} \n\n {extracted_content}"
+
+            # Add user input to the message history
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            with chat_messages:
+                st.chat_message("user").write(prompt)
+                # Use a placeholder for "Thinking..."
+                thinking_placeholder = st.empty()  # Create a placeholder dynamically
+                with thinking_placeholder:
+                    st.chat_message("assistant").write("Thinking...")  # Display "Thinking..."  
+
+            
+
+            # Generate response for the current query
+            try:
+                # Get response from RAG chain
+                response = invoke_rag_chain(prompt, st.session_state.chat_history)
+                response_text = preprocess_latex_in_response(response["answer"])  # Fix LaTeX formatting in the response
+
+                # Clear the "Thinking..." placeholder before showing the response
+                thinking_placeholder.empty()
+
+                # Update chat history
+                st.session_state.chat_history = update_chat_history(
+                    st.session_state.chat_history,
+                    prompt,
+                    response_text
+                )
+
+                # Add assistant response to the message history
+                st.session_state.messages.append({"role": "assistant", "content": response_text})
+
+                # Display the assistant's response
+                with chat_messages:
+                    st.chat_message("assistant").write(response_text)
+
+            except Exception as e:
+                # Handle errors gracefully
+                error_message = f"An error occurred: {str(e)}"
+
+                # Clear the "Thinking..." placeholder before showing the error message
+                thinking_placeholder.empty()
+
+                # Add error message to the message history
+                st.session_state.messages.append({"role": "assistant", "content": error_message})
+                with chat_messages:
+                    st.chat_message("assistant").write(error_message)
+
+                    st.chat_message("assistant").write(error_message)
+
+
+            
