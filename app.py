@@ -26,7 +26,7 @@ load_dotenv()
 
 
 os.environ["LANGSMITH_TRACING_V2"] = "true"
-os.environ["LANGSMITH_PROJECT"] = "TutorBot"
+os.environ["LANGSMITH_PROJECT"] = "tutor-deployed"
 
 # Load API keys from secrets.toml
 # Correct key names based on secrets.toml
