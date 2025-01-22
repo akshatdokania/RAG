@@ -13,8 +13,13 @@ from langchain.chains import create_history_aware_retriever, create_retrieval_ch
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langsmith import traceable
 from pix2text import Pix2Text
+from pdf2image import convert_from_path
+import PyPDF2
+from pix2text import Pix2Text
+import tempfile
 import tempfile
 import re
+
 
 # Load environment variables
 load_dotenv()
@@ -44,23 +49,7 @@ def invoke_rag_chain(prompt: str, chat_history: list):
     response = rag_chain.invoke({"input": prompt, "chat_history": chat_history})
     return response
 
-def preprocess_latex_in_response(response):
-    """
-    Detect and format LaTeX-like expressions while skipping plain text and already valid LaTeX.
-    """
-    # Regex to match LaTeX-like content inside parentheses
-    # Includes symbols (\alpha, \hat{y}_i), sub/superscripts (_i, ^2), and braces ({res})
-    equation_pattern = r"\((\\[a-zA-Z]+(?:_[a-zA-Z0-9]+)?(?:\^\{?[a-zA-Z0-9]+\}?)?(?:,\s*\\[a-zA-Z]+)*)\)"
 
-    # Function to format detected LaTeX expressions
-    def format_equation(match):
-        equation = match.group(1)  # Extract content inside parentheses
-        return f"$$ {equation} $$"  # Wrap in $$ for block rendering
-
-    # Skip already formatted LaTeX (e.g., $$...$$) by checking for $$ and applying selectively
-    processed_response = re.sub(equation_pattern, format_equation, response)
-
-    return processed_response
 
 # Initialize session state
 if "messages" not in st.session_state:
@@ -86,33 +75,33 @@ def preprocess_latex_in_response(response):
     """
     # Regex to detect unformatted LaTeX-style expressions (e.g., (theta), (x^i))
     # Avoids already valid `$ ... $` or `$$ ... $$`
-    equation_pattern = r"(?<!\$)\(([\\a-zA-Z0-9_^,]+)\)(?!\$)"  # Detect math in parentheses
+    # equation_pattern = r"(?<!\$)\(([\\a-zA-Z0-9_^,]+)\)(?!\$)"  # Detect math in parentheses
 
-    # Skip already valid inline or block LaTeX
-    valid_math_pattern = r"(\$\$.*?\$\$|\$.*?\$)"  # Matches valid `$ ... $` or `$$ ... $$`
+    # # Skip already valid inline or block LaTeX
+    # valid_math_pattern = r"(\$\$.*?\$\$|\$.*?\$)"  # Matches valid `$ ... $` or `$$ ... $$`
     
-    # Placeholder for valid LaTeX to prevent modification
-    valid_math_placeholders = []
-    response_with_placeholders = response
+    # # Placeholder for valid LaTeX to prevent modification
+    # valid_math_placeholders = []
+    # response_with_placeholders = response
 
-    # Replace valid math blocks with placeholders
-    for match in re.finditer(valid_math_pattern, response):
-        placeholder = f"__VALID_MATH_{len(valid_math_placeholders)}__"
-        valid_math_placeholders.append(match.group(0))
-        response_with_placeholders = response_with_placeholders.replace(match.group(0), placeholder, 1)
+    # # Replace valid math blocks with placeholders
+    # for match in re.finditer(valid_math_pattern, response):
+    #     placeholder = f"__VALID_MATH_{len(valid_math_placeholders)}__"
+    #     valid_math_placeholders.append(match.group(0))
+    #     response_with_placeholders = response_with_placeholders.replace(match.group(0), placeholder, 1)
 
-    # Process remaining parts of the response for unformatted math
-    def format_equation(match):
-        equation = match.group(1)  # Extract content inside parentheses
-        return f"$$ {equation} $$"  # Wrap in $$ for block rendering
+    # # Process remaining parts of the response for unformatted math
+    # def format_equation(match):
+    #     equation = match.group(1)  # Extract content inside parentheses
+    #     return f"$$ {equation} $$"  # Wrap in $$ for block rendering
 
-    processed_response = re.sub(equation_pattern, format_equation, response_with_placeholders)
+    # processed_response = re.sub(equation_pattern, format_equation, response_with_placeholders)
 
-    # Restore valid math blocks from placeholders
-    for i, valid_math in enumerate(valid_math_placeholders):
-        processed_response = processed_response.replace(f"__VALID_MATH_{i}__", valid_math, 1)
+    # # Restore valid math blocks from placeholders
+    # for i, valid_math in enumerate(valid_math_placeholders):
+    #     processed_response = processed_response.replace(f"__VALID_MATH_{i}__", valid_math, 1)
 
-    return processed_response
+    return response
 
 # Initialize SentenceTransformer model for embeddings
 modelPath = "sentence-transformers/all-MiniLM-l6-v2"
@@ -175,21 +164,58 @@ def update_chat_history(chat_history, human_message, ai_message):
     return chat_history
 
 # Function to process uploaded image and extract text
-def process_uploaded_image(image):
+def process_uploaded_file(file):
     try:
-        with tempfile.NamedTemporaryFile(delete=True, suffix=".jpg") as temp_file:
-            temp_file.write(image.getvalue())
-            temp_file.flush()
+        extracted_text = ""
 
-            # Initialize Pix2Text
-            p2t = Pix2Text.from_config(device="cpu")
+        if file.type == "application/pdf":
+            # Handle PDF files
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+                temp_file.write(file.getvalue())
+                temp_file.flush()
 
-            # Extract content from the image
-            recognized_content = p2t.recognize(temp_file.name)
-            return recognized_content
+                # Try extracting text directly using PyPDF2
+                try:
+                    with open(temp_file.name, "rb") as pdf_file:
+                        reader = PyPDF2.PdfReader(pdf_file)
+                        for page in reader.pages:
+                            extracted_text += page.extract_text() or ""  # Append text if available
+                except Exception as e:
+                    print(f"Text extraction from PDF failed: {e}. Proceeding with image conversion.")
+
+                # If no text was extracted or fallback is needed
+                if not extracted_text.strip():
+                    pages = convert_from_path(temp_file.name, dpi=300)
+                    p2t = Pix2Text.from_config(device="cpu")
+                    for i, page in enumerate(pages):
+                        temp_image_path = f"/tmp/page_{i + 1}.jpg"  # Save temporary images
+                        page.save(temp_image_path, "JPEG")
+                        page_text = p2t.recognize(temp_image_path)
+                        extracted_text += page_text + "\n"
+
+        elif file.type.startswith("image/"):
+            # Handle image files
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_file:
+                temp_file.write(file.getvalue())
+                temp_file.flush()
+
+                # Extract text from the image using Pix2Text
+                p2t = Pix2Text.from_config(device="cpu")
+                extracted_text = p2t.recognize(temp_file.name)
+
+        else:
+            st.error("Unsupported file type. Please upload an image or a PDF.")
+            return None
+
+        if not extracted_text.strip():
+            st.warning("No text could be extracted from the file.")
+            return None
+
+        return extracted_text.strip()
+
     except Exception as e:
-        st.error(f"Failed to process the image: {str(e)}")
-        return ""
+        st.error(f"Failed to process the file: {str(e)}")
+        return None
 
 # Define a scrollable main area for chat history and fixed bottom input area
 # chat_container = st.container(height = 500)
@@ -458,10 +484,12 @@ with st.container():
     # File uploader logic
     with col1:
         st.markdown('<div class="stFileUploader">', unsafe_allow_html=True)
-        uploaded_file = st.file_uploader(label_visibility="collapsed", label="Upload an image", key="file_uploader",type=['png','pdf'])
+        uploaded_file = st.file_uploader(label_visibility="collapsed", label="Upload a file (image or PDF)", key="file_uploader",type = ['png','pdf'])
+
         extracted_content = ""
         if uploaded_file:
-            extracted_content = process_uploaded_image(uploaded_file)
+            extracted_content = process_uploaded_file(uploaded_file)
+
 
     # Chat input logic
     # Chat input logic
@@ -491,7 +519,7 @@ with st.container():
             try:
                 # Get response from RAG chain
                 response = invoke_rag_chain(prompt, st.session_state.chat_history)
-                response_text = preprocess_latex_in_response(response["answer"])  # Fix LaTeX formatting in the response
+                response_text = response["answer"]  # Fix LaTeX formatting in the response
 
                 # Clear the "Thinking..." placeholder before showing the response
                 thinking_placeholder.empty()
