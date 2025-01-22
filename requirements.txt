@@ -13,7 +13,7 @@ sentence-transformers
 faiss-cpu
 setuptools
 wheel
-opencv-python
+opencv-python-headless
 langsmith
 datasets
 pix2text
