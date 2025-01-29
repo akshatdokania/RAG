@@ -26,7 +26,7 @@ load_dotenv()
 
 
 os.environ["LANGSMITH_TRACING_V2"] = "true"
-os.environ["LANGSMITH_PROJECT"] = "Tutor-deployed"
+os.environ["LANGSMITH_PROJECT"] = "Tutor"
 
 # Load API keys from secrets.toml
 # Correct key names based on secrets.toml
@@ -50,58 +50,66 @@ def invoke_rag_chain(prompt: str, chat_history: list):
     return response
 
 
-
 # Initialize session state
 if "messages" not in st.session_state:
     st.session_state["messages"] = []  # Initialize the message history
 if "chat_history" not in st.session_state:
     st.session_state["chat_history"] = []  # Initialize the chat history
+if "is_processing" not in st.session_state:
+    st.session_state["is_processing"] = False
+
+
 
 # Streamlit app setup
 st.set_page_config(
     page_title="DS-120 Virtual Teaching Assistant Chatbot",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 st.markdown("<h1 style='text-align: center;'>DS-120 Virtual Teaching Assistant Chatbot</h1>", unsafe_allow_html=True)
 
-
-
-def preprocess_latex_in_response(response):
+# Add an "Instructions" button to the sidebar
+st.markdown(
     """
-    Detect unformatted LaTeX-style expressions and process them,
-    while skipping already valid LaTeX math and avoiding over-wrapping.
-    """
-    # Regex to detect unformatted LaTeX-style expressions (e.g., (theta), (x^i))
-    # Avoids already valid `$ ... $` or `$$ ... $$`
-    # equation_pattern = r"(?<!\$)\(([\\a-zA-Z0-9_^,]+)\)(?!\$)"  # Detect math in parentheses
+    <style>
+        /* Reduce the sidebar width when expanded */
+        [data-testid="stSidebarContent"][aria-expanded="true"] > div:first-child {
+            width: 100px;  /* Set a small width for the sidebar */
+            padding: 0;  /* Remove internal padding */
+        }
 
-    # # Skip already valid inline or block LaTeX
-    # valid_math_pattern = r"(\$\$.*?\$\$|\$.*?\$)"  # Matches valid `$ ... $` or `$$ ... $$`
-    
-    # # Placeholder for valid LaTeX to prevent modification
-    # valid_math_placeholders = []
-    # response_with_placeholders = response
+        /* Hide the sidebar completely when collapsed */
+        [data-testid="stSidebar"][aria-expanded="false"] > div:first-child {
+            width: 0px;  /* Collapse width */
+            margin-left: -150px;  /* Adjust for alignment */
+        }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
-    # # Replace valid math blocks with placeholders
-    # for match in re.finditer(valid_math_pattern, response):
-    #     placeholder = f"__VALID_MATH_{len(valid_math_placeholders)}__"
-    #     valid_math_placeholders.append(match.group(0))
-    #     response_with_placeholders = response_with_placeholders.replace(match.group(0), placeholder, 1)
+# Add an "Instructions" button in the sidebar
+def add_instructions_button():
+    # Instructions Button (Opens Info Box)
+    if st.sidebar.button("Instructions", key="instructions_button"):
+        st.sidebar.info(
+            "### Instructions\n"
+            "1. Upload files if needed.\n"
+            "2. Type your question in the input box.\n"
+            "3. Receive a response from the assistant."
+        )
 
-    # # Process remaining parts of the response for unformatted math
-    # def format_equation(match):
-    #     equation = match.group(1)  # Extract content inside parentheses
-    #     return f"$$ {equation} $$"  # Wrap in $$ for block rendering
+    # Feedback Button (Opens Link)
+    if st.sidebar.button("Feedback", key="feedback_button"):
+        st.sidebar.markdown(
+            '[Click here to provide feedback](https://docs.google.com/forms/d/e/1FAIpQLSfaGG9AL_V0ThQ45mMO1bKDn_gLljhY1kAG1RY_k3E8U1Kefw/viewform)', 
+            unsafe_allow_html=True
+        )
 
-    # processed_response = re.sub(equation_pattern, format_equation, response_with_placeholders)
+# Call the function to display the button in the sidebar
+add_instructions_button()
 
-    # # Restore valid math blocks from placeholders
-    # for i, valid_math in enumerate(valid_math_placeholders):
-    #     processed_response = processed_response.replace(f"__VALID_MATH_{i}__", valid_math, 1)
-
-    return response
 
 # Initialize SentenceTransformer model for embeddings
 modelPath = "sentence-transformers/all-MiniLM-l6-v2"
@@ -113,7 +121,7 @@ embeddings = HuggingFaceEmbeddings(
 
 # Load FAISS vector store
 vectordb = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deserialization=True)
-retriever = vectordb.as_retriever(search_type="similarity", search_kwargs={"k": 4})
+retriever = vectordb.as_retriever(search_type="similarity", search_kwargs={"k":4})
 
 # Initialize OpenAI model
 llm = ChatOpenAI(model="gpt-4o-mini",api_key=os.environ["OPENAI_API_KEY"])
@@ -475,7 +483,15 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-
+# Hide Streamlit menu (ellipsis), Deploy button, and footer
+hide_streamlit_style = """
+    <style>
+        #MainMenu {visibility: hidden;} /* Hides the three-dot menu */
+        footer {visibility: hidden;} /* Hides the Streamlit footer */
+        header {visibility: hidden;} /* Hides the Deploy button */
+    </style>
+"""
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 # Fixed bottom layout for file upload and chat input
 with st.container():
     st.markdown('<div class="input-container">', unsafe_allow_html=True)
@@ -495,7 +511,8 @@ with st.container():
     # Chat input logic
     with col2:
         st.markdown('<div class="custom-col">', unsafe_allow_html=True)
-        if prompt := st.chat_input("Type your question here..."):
+        if prompt := st.chat_input("Type your question here...", disabled=st.session_state["is_processing"]):
+            st.session_state["is_processing"] = True
             # Check if an image is uploaded and extract content
             if extracted_content:
                 # Append "Attachment" to the user's input for UI display
@@ -549,3 +566,7 @@ with st.container():
                 st.session_state.messages.append({"role": "assistant", "content": error_message})
                 with chat_messages:
                     st.chat_message("assistant").write(error_message)
+            
+            finally:
+            # Reset the processing state
+                st.session_state["is_processing"] = False
