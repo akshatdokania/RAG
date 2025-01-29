@@ -484,13 +484,16 @@ st.markdown(
     unsafe_allow_html=True,
 )
 # Hide Streamlit menu (ellipsis), Deploy button, and footer
+# Hide Deploy button and three-dot menu but keep "Running"
 hide_streamlit_style = """
     <style>
-        #MainMenu {visibility: hidden;} /* Hides the three-dot menu */
-        footer {visibility: hidden;} /* Hides the Streamlit footer */
-        header {visibility: hidden;} /* Hides the Deploy button */
+        #MainMenu {visibility: hidden;} /* Hide the three-dot menu */
+        footer {visibility: hidden;} /* Hide Streamlit footer */
     </style>
 """
+
+
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 # Fixed bottom layout for file upload and chat input
 with st.container():
