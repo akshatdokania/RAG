@@ -88,6 +88,43 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+import re
+
+def sanitize_latex(text):
+    """
+    Step 9: Ensures proper LaTeX formatting for Streamlit Markdown.
+    - Converts \( ... \) to $ ... $ (for inline math).
+    - Converts \[ ... \] to $$ ... $$ (for block math).
+    - Removes unnecessary spaces inside $$ ... $$.
+    - Ensures block math appears on separate lines.
+    - Prevents Streamlit rendering issues by enforcing correct newlines.
+    """
+
+    # 1️⃣ Skip processing if already wrapped in block math
+    stripped_text = text.strip()
+    if stripped_text.startswith("$$") and stripped_text.endswith("$$"):
+        return text  # ✅ Don't modify already formatted block math
+
+    # 2️⃣ Convert inline LaTeX `\( ... \)` → `$ ... $`
+    text = re.sub(r"\\\((.*?)\\\)", r"$\1$", text)
+
+    # 3️⃣ Convert block LaTeX `\[ ... \]` → `$$ ... $$`
+    # ✅ Ensure no extra spaces inside `$$ ... $$`
+    text = re.sub(r"\s*\\\[\s*(.*?)\s*\\\]\s*", r"\n$$\1$$\n", text, flags=re.DOTALL)
+
+    # 4️⃣ Remove any accidental double spaces around `$$ ... $$`
+    text = re.sub(r"\$\$\s+", "$$", text)
+    text = re.sub(r"\s+\$\$", "$$", text)
+
+    # 5️⃣ Ensure inline math has proper spacing
+    text = re.sub(r"(?<!\s)\$(.*?)\$(?!\s)", r" $\1$ ", text)  # ✅ Prevents missing spaces around math
+
+    # 6️⃣ Ensure matching `$` delimiters (close any unclosed inline math)
+    if text.count("$") % 2 != 0:
+        text += "$"  # ✅ Auto-close inline math if an odd `$` count is detected
+
+    return text
+
 
 # Add an "Instructions" button in the sidebar
 def add_instructions_button():
@@ -483,7 +520,6 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-# Hide Streamlit menu (ellipsis), Deploy button, and footer
 # Hide Deploy button and three-dot menu but keep "Running"
 hide_streamlit_style = """
     <style>
@@ -491,9 +527,6 @@ hide_streamlit_style = """
         footer {visibility: hidden;} /* Hide Streamlit footer */
     </style>
 """
-
-
-st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 # Fixed bottom layout for file upload and chat input
 with st.container():
@@ -539,7 +572,11 @@ with st.container():
             try:
                 # Get response from RAG chain
                 response = invoke_rag_chain(prompt, st.session_state.chat_history)
-                response_text = response["answer"]  # Fix LaTeX formatting in the response
+                response_text = response["answer"]
+                response_text = sanitize_latex(response_text)
+                # print("\n===== RAW SANITIZED OUTPUT =====\n")
+                # print(response_text)
+                # print("\n===============================\n")
 
                 # Clear the "Thinking..." placeholder before showing the response
                 thinking_placeholder.empty()
