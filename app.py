@@ -55,9 +55,8 @@ if "messages" not in st.session_state:
     st.session_state["messages"] = []  # Initialize the message history
 if "chat_history" not in st.session_state:
     st.session_state["chat_history"] = []  # Initialize the chat history
-if "is_processing" not in st.session_state:
-    st.session_state["is_processing"] = False
-
+if "chat_input" not in st.session_state:
+    st.session_state.chat_input = False
 
 
 # Streamlit app setup
@@ -89,38 +88,53 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-import re
-
-import re
-
-import re
-
-import re
+def disable_callback():
+    st.session_state.chat_input = True
 
 def add_newline_after_block_math(text):
     """
     Ensures:
-    - Every block equation ($$ ... $$) is followed by at least one blank line.
-    - Every Markdown heading (#, ##, ###, ####) is correctly separated from other content.
+    - Block equations ($$ ... $$) are properly spaced:
+      - A blank line after opening $$
+      - A blank line before closing $$
+      - A blank line after the entire block equation
+    - Markdown headings (#, ##, ###, ####) are correctly separated from other content.
     - Prevents headings from merging with equations.
     """
 
-    # ✅ Ensure **at least one blank line** after `$$ ... $$`
+    # ✅ Ensure **a blank line after opening $$ and before closing $$**
+    text = re.sub(r"\$\$(.*?)\$\$", r"$$\n\1\n$$", text, flags=re.DOTALL)
+
+    # ✅ Ensure **at least one blank line after block equations**
     text = re.sub(r"(\$\$.*?\$\$)(\S)", r"\1\n\n\2", text, flags=re.DOTALL)
 
-    # ✅ Ensure **at least one blank line** before Markdown headings (`# Heading`, `## Heading`, etc.)
+    # ✅ Ensure **at least one blank line before Markdown headings**
     text = re.sub(r"(\$\$.*?\$\$)\s*(#+ )", r"\1\n\n\2", text, flags=re.DOTALL)
 
     return text
 
+
+# def add_newline_after_block_math(text):
+#     """
+#     Ensures that block math equations (`$$ ... $$`) are always followed by a new line.
+#     - Does NOT add unnecessary new lines if already present.
+#     - Does NOT modify inline math ($...$).
+#     - Works safely alongside `sanitize_latex()`.
+#     """
+
+#     # ✅ Add a newline only if there isn't already one after `$$ ... $$`
+#     text = re.sub(r"(\$\$.*?\$\$)([^\n])", r"\1\n\2", text, flags=re.DOTALL)
+
+#     return text
+
 def sanitize_latex(text):
     """
-    Step 12: Ensures proper LaTeX formatting for Streamlit Markdown.
+    Step 9: Ensures proper LaTeX formatting for Streamlit Markdown.
     - Converts \( ... \) to $ ... $ (for inline math).
     - Converts \[ ... \] to $$ ... $$ (for block math).
-    - Ensures a new line after block equations for better readability.
-    - Prevents accidental merging with normal text.
-    - Fixes bold LaTeX syntax (**$\text{SS}_{res}$** instead of ** $\text{SS}_{res}$ **).
+    - Removes unnecessary spaces inside $$ ... $$.
+    - Ensures block math appears on separate lines.
+    - Prevents Streamlit rendering issues by enforcing correct newlines.
     """
 
     # 1️⃣ Skip processing if already wrapped in block math
@@ -132,26 +146,20 @@ def sanitize_latex(text):
     text = re.sub(r"\\\((.*?)\\\)", r"$\1$", text)
 
     # 3️⃣ Convert block LaTeX `\[ ... \]` → `$$ ... $$`
-    # ✅ Ensure a blank line **after** each block equation for better readability
-    text = re.sub(r"\s*\\\[\s*(.*?)\s*\\\]\s*", r"\n$$\1$$\n\n", text, flags=re.DOTALL)
+    # ✅ Ensure no extra spaces inside `$$ ... $$`
+    text = re.sub(r"\s*\\\[\s*(.*?)\s*\\\]\s*", r"\n$$\1$$\n", text, flags=re.DOTALL)
 
-    # 4️⃣ Remove any accidental double spaces around `$$ ... $$`
-    text = re.sub(r"\$\$\s+", "$$", text)
-    text = re.sub(r"\s+\$\$", "$$", text)
 
     # 5️⃣ Ensure inline math has proper spacing
     text = re.sub(r"(?<!\s)\$(.*?)\$(?!\s)", r" $\1$ ", text)  # ✅ Prevents missing spaces around math
 
-    # 6️⃣ Fix misplaced `$` inside bold Markdown (** $\text{SS}_{res}$ ** → **$\text{SS}_{res}$**)
-    text = re.sub(r"\*\* \$(.*?)\$ \*\*", r"**$\1$**", text)
-
-    # 7️⃣ Ensure matching `$` delimiters (close any unclosed inline math)
+    # 6️⃣ Ensure matching `$` delimiters (close any unclosed inline math)
+    text = re.sub(r"\$\s+\$", "$$", text)
     if text.count("$") % 2 != 0:
         text += "$"  # ✅ Auto-close inline math if an odd `$` count is detected
-
+    text = re.sub(r"\*\* \$(.*?)\$ \*\*", r"**$\1$**", text)
+    
     return text
-
-
 
 
 # Add an "Instructions" button in the sidebar
@@ -189,7 +197,7 @@ vectordb = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deseriali
 retriever = vectordb.as_retriever(search_type="similarity", search_kwargs={"k":4})
 
 # Initialize OpenAI model
-llm = ChatOpenAI(model="gpt-4o-mini",api_key=os.environ["OPENAI_API_KEY"])
+llm = ChatOpenAI(model="gpt-4o-mini",api_key=os.environ["OPENAI_API_KEY"], temperature=0.01)
 
 contextualize_q_system_prompt = st.secrets["ds120_prompts"]["contextualize_q_system_prompt"]
 qa_prompt_template = st.secrets["ds120_prompts"]["qa_prompt_template"]
@@ -549,15 +557,13 @@ st.markdown(
     unsafe_allow_html=True,
 )
 # Hide Streamlit menu (ellipsis), Deploy button, and footer
-# Hide Deploy button and three-dot menu but keep "Running"
 hide_streamlit_style = """
     <style>
-        #MainMenu {visibility: hidden;} /* Hide the three-dot menu */
-        footer {visibility: hidden;} /* Hide Streamlit footer */
+        #MainMenu {visibility: hidden;} /* Hides the three-dot menu */
+        footer {visibility: hidden;} /* Hides the Streamlit footer */
+        header {visibility: hidden;} /* Hides the Deploy button */
     </style>
 """
-
-st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 # Fixed bottom layout for file upload and chat input
 with st.container():
@@ -580,9 +586,10 @@ with st.container():
 
     with col2:
             st.markdown('<div class="custom-col">', unsafe_allow_html=True)
-            if prompt := st.chat_input("Type your question here...", disabled=st.session_state["is_processing"]):
+            prompt = st.chat_input("Type your question here...", disabled=st.session_state.chat_input, on_submit=disable_callback)
+            if prompt:
+                st.session_state.chat_input = True  # Disable input while processing
                 st.session_state["is_processing"] = True
-
                 # Check if an image is uploaded and extract content
                 if extracted_content:
                     ui_display_prompt = f"{prompt} \n\n[Attachment]"
@@ -606,10 +613,10 @@ with st.container():
                                 response = invoke_rag_chain(prompt, st.session_state.chat_history)
                                 response_text = response["answer"]
                                 response_text = sanitize_latex(response_text)
-                                response_text = add_newline_after_block_math(response_text)
-                                # print("\n===== RAW SANITIZED OUTPUT =====\n")
-                                # print(response_text)
-                                # print("\n===============================\n")
+                                #response_text = add_newline_after_block_math(response_text)
+                                print("\n===== RAW SANITIZED OUTPUT =====\n")
+                                print(response_text)
+                                print("\n===============================\n")
                             except Exception as e:
                                 response_text = f"An error occurred: {str(e)}"
 
@@ -627,7 +634,8 @@ with st.container():
                 )
 
                 # Reset processing state
-                st.session_state["is_processing"] = False
+                st.session_state.chat_input = False  # Enable input after processing
+                st.rerun()
 
 
                                 
