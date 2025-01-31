@@ -68,6 +68,15 @@ st.set_page_config(
 
 st.markdown("<h1 style='text-align: center;'>DS-120 Virtual Teaching Assistant Chatbot</h1>", unsafe_allow_html=True)
 
+# Hide Deploy button and three-dot menu but keep "Running"
+hide_streamlit_style = """
+    <style>
+        #MainMenu {visibility: hidden;} /* Hide the three-dot menu */
+        footer {visibility: hidden;} /* Hide Streamlit footer */
+    </style>
+"""
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+
 # Add an "Instructions" button to the sidebar
 st.markdown(
     """
