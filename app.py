@@ -68,14 +68,7 @@ st.set_page_config(
 
 st.markdown("<h1 style='text-align: center;'>DS-120 Virtual Teaching Assistant Chatbot</h1>", unsafe_allow_html=True)
 
-# Hide Deploy button and three-dot menu but keep "Running"
-hide_streamlit_style = """
-    <style>
-        #MainMenu {visibility: hidden;} /* Hide the three-dot menu */
-        footer {visibility: hidden;} /* Hide Streamlit footer */
-    </style>
-"""
-st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+
 
 # Add an "Instructions" button to the sidebar
 st.markdown(
@@ -122,6 +115,14 @@ def add_newline_after_block_math(text):
 
     return text
 
+# Hide Deploy button and three-dot menu but keep "Running"
+hide_streamlit_style = """
+    <style>
+        #MainMenu {visibility: hidden;} /* Hide the three-dot menu */
+        footer {visibility: hidden;} /* Hide Streamlit footer */
+    </style>
+"""
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
 # def add_newline_after_block_math(text):
 #     """
@@ -565,15 +566,7 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
-# Hide Streamlit menu (ellipsis), Deploy button, and footer
-hide_streamlit_style = """
-    <style>
-        #MainMenu {visibility: hidden;} /* Hides the three-dot menu */
-        footer {visibility: hidden;} /* Hides the Streamlit footer */
-        header {visibility: hidden;} /* Hides the Deploy button */
-    </style>
-"""
-st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+
 # Fixed bottom layout for file upload and chat input
 with st.container():
     st.markdown('<div class="input-container">', unsafe_allow_html=True)
