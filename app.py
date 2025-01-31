@@ -230,7 +230,7 @@ history_aware_retriever = create_history_aware_retriever(
 qa_prompt = ChatPromptTemplate.from_messages(
     [
         ("system", qa_prompt_template),
-        MessagesPlaceholder(variable_name="chat_history"),
+        # MessagesPlaceholder(variable_name="chat_history"),
         ("human", "{input}"),
     ]
 )
