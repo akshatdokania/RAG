@@ -2,7 +2,7 @@ import os
 import streamlit as st
 from dotenv import load_dotenv
 from langchain_core.prompts import PromptTemplate
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain.embeddings import HuggingFaceEmbeddings
 from langchain_openai import ChatOpenAI
 from langchain_community.vectorstores import FAISS
 from langchain.chains import LLMChain
@@ -88,16 +88,39 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
 import re
+
+import re
+
+import re
+
+import re
+
+def add_newline_after_block_math(text):
+    """
+    Ensures:
+    - Every block equation ($$ ... $$) is followed by at least one blank line.
+    - Every Markdown heading (#, ##, ###, ####) is correctly separated from other content.
+    - Prevents headings from merging with equations.
+    """
+
+    # ✅ Ensure **at least one blank line** after `$$ ... $$`
+    text = re.sub(r"(\$\$.*?\$\$)(\S)", r"\1\n\n\2", text, flags=re.DOTALL)
+
+    # ✅ Ensure **at least one blank line** before Markdown headings (`# Heading`, `## Heading`, etc.)
+    text = re.sub(r"(\$\$.*?\$\$)\s*(#+ )", r"\1\n\n\2", text, flags=re.DOTALL)
+
+    return text
 
 def sanitize_latex(text):
     """
-    Step 9: Ensures proper LaTeX formatting for Streamlit Markdown.
+    Step 12: Ensures proper LaTeX formatting for Streamlit Markdown.
     - Converts \( ... \) to $ ... $ (for inline math).
     - Converts \[ ... \] to $$ ... $$ (for block math).
-    - Removes unnecessary spaces inside $$ ... $$.
-    - Ensures block math appears on separate lines.
-    - Prevents Streamlit rendering issues by enforcing correct newlines.
+    - Ensures a new line after block equations for better readability.
+    - Prevents accidental merging with normal text.
+    - Fixes bold LaTeX syntax (**$\text{SS}_{res}$** instead of ** $\text{SS}_{res}$ **).
     """
 
     # 1️⃣ Skip processing if already wrapped in block math
@@ -109,8 +132,8 @@ def sanitize_latex(text):
     text = re.sub(r"\\\((.*?)\\\)", r"$\1$", text)
 
     # 3️⃣ Convert block LaTeX `\[ ... \]` → `$$ ... $$`
-    # ✅ Ensure no extra spaces inside `$$ ... $$`
-    text = re.sub(r"\s*\\\[\s*(.*?)\s*\\\]\s*", r"\n$$\1$$\n", text, flags=re.DOTALL)
+    # ✅ Ensure a blank line **after** each block equation for better readability
+    text = re.sub(r"\s*\\\[\s*(.*?)\s*\\\]\s*", r"\n$$\1$$\n\n", text, flags=re.DOTALL)
 
     # 4️⃣ Remove any accidental double spaces around `$$ ... $$`
     text = re.sub(r"\$\$\s+", "$$", text)
@@ -119,11 +142,16 @@ def sanitize_latex(text):
     # 5️⃣ Ensure inline math has proper spacing
     text = re.sub(r"(?<!\s)\$(.*?)\$(?!\s)", r" $\1$ ", text)  # ✅ Prevents missing spaces around math
 
-    # 6️⃣ Ensure matching `$` delimiters (close any unclosed inline math)
+    # 6️⃣ Fix misplaced `$` inside bold Markdown (** $\text{SS}_{res}$ ** → **$\text{SS}_{res}$**)
+    text = re.sub(r"\*\* \$(.*?)\$ \*\*", r"**$\1$**", text)
+
+    # 7️⃣ Ensure matching `$` delimiters (close any unclosed inline math)
     if text.count("$") % 2 != 0:
         text += "$"  # ✅ Auto-close inline math if an odd `$` count is detected
 
     return text
+
+
 
 
 # Add an "Instructions" button in the sidebar
@@ -520,6 +548,7 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+# Hide Streamlit menu (ellipsis), Deploy button, and footer
 # Hide Deploy button and three-dot menu but keep "Running"
 hide_streamlit_style = """
     <style>
@@ -527,6 +556,8 @@ hide_streamlit_style = """
         footer {visibility: hidden;} /* Hide Streamlit footer */
     </style>
 """
+
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 # Fixed bottom layout for file upload and chat input
 with st.container():
@@ -545,68 +576,58 @@ with st.container():
 
     # Chat input logic
     # Chat input logic
+    
+
     with col2:
-        st.markdown('<div class="custom-col">', unsafe_allow_html=True)
-        if prompt := st.chat_input("Type your question here...", disabled=st.session_state["is_processing"]):
-            st.session_state["is_processing"] = True
-            # Check if an image is uploaded and extract content
-            if extracted_content:
-                # Append "Attachment" to the user's input for UI display
-                ui_display_prompt = f"{prompt} \n\n[Attachment]"
-                # Append the extracted content to the prompt for LLM
-                prompt = f"{prompt}\n\n{extracted_content}"
-            else:
-                # No image attached, use the prompt as is
-                ui_display_prompt = prompt
+            st.markdown('<div class="custom-col">', unsafe_allow_html=True)
+            if prompt := st.chat_input("Type your question here...", disabled=st.session_state["is_processing"]):
+                st.session_state["is_processing"] = True
 
-            # Add user input (with "Attachment" if applicable) to the message history
-            st.session_state.messages.append({"role": "user", "content": ui_display_prompt})
-            with chat_messages:
-                st.chat_message("user").write(ui_display_prompt)
-                # Use a placeholder for "Thinking..."
-                thinking_placeholder = st.empty()  # Create a placeholder dynamically
-                with thinking_placeholder:
-                    st.chat_message("assistant").write("Thinking...")  # Display "Thinking..."
+                # Check if an image is uploaded and extract content
+                if extracted_content:
+                    ui_display_prompt = f"{prompt} \n\n[Attachment]"
+                    prompt = f"{prompt}\n\n{extracted_content}"
+                else:
+                    ui_display_prompt = prompt
 
-            # Generate response for the current query
-            try:
-                # Get response from RAG chain
-                response = invoke_rag_chain(prompt, st.session_state.chat_history)
-                response_text = response["answer"]
-                response_text = sanitize_latex(response_text)
-                # print("\n===== RAW SANITIZED OUTPUT =====\n")
-                # print(response_text)
-                # print("\n===============================\n")
+                # Add user input (with "Attachment" if applicable) to the message history
+                st.session_state.messages.append({"role": "user", "content": ui_display_prompt})
 
-                # Clear the "Thinking..." placeholder before showing the response
-                thinking_placeholder.empty()
+                # ✅ Render messages inside the chat container to maintain aesthetics
+                with chat_messages:
+                    st.chat_message("user").write(ui_display_prompt)
 
-                # Update chat history
+                    # ✅ Use `st.empty()` so response replaces "Thinking..." without breaking UI
+                    response_placeholder = st.chat_message("assistant").empty()
+
+                    with response_placeholder:
+                        with st.spinner("Thinking..."):
+                            try:
+                                response = invoke_rag_chain(prompt, st.session_state.chat_history)
+                                response_text = response["answer"]
+                                response_text = sanitize_latex(response_text)
+                                response_text = add_newline_after_block_math(response_text)
+                                # print("\n===== RAW SANITIZED OUTPUT =====\n")
+                                # print(response_text)
+                                # print("\n===============================\n")
+                            except Exception as e:
+                                response_text = f"An error occurred: {str(e)}"
+
+                    # ✅ Overwrite "Thinking..." with actual response (inside the chat UI)
+                    response_placeholder.write(response_text)
+
+                    # Add assistant response to session state
+                    st.session_state.messages.append({"role": "assistant", "content": response_text})
+
+                # Update chat history to maintain context
                 st.session_state.chat_history = update_chat_history(
                     st.session_state.chat_history,
                     prompt,
                     response_text
                 )
 
-                # Add assistant response to the message history
-                st.session_state.messages.append({"role": "assistant", "content": response_text})
-
-                # Display the assistant's response
-                with chat_messages:
-                    st.chat_message("assistant").write(response_text)
-
-            except Exception as e:
-                # Handle errors gracefully
-                error_message = f"An error occurred: {str(e)}"
-
-                # Clear the "Thinking..." placeholder before showing the error message
-                thinking_placeholder.empty()
-
-                # Add error message to the message history
-                st.session_state.messages.append({"role": "assistant", "content": error_message})
-                with chat_messages:
-                    st.chat_message("assistant").write(error_message)
-            
-            finally:
-            # Reset the processing state
+                # Reset processing state
                 st.session_state["is_processing"] = False
+
+
+                                
