@@ -68,8 +68,6 @@ st.set_page_config(
 
 st.markdown("<h1 style='text-align: center;'>DS-120 Virtual Teaching Assistant Chatbot</h1>", unsafe_allow_html=True)
 
-
-
 # Add an "Instructions" button to the sidebar
 st.markdown(
     """
@@ -115,14 +113,6 @@ def add_newline_after_block_math(text):
 
     return text
 
-# Hide Deploy button and three-dot menu but keep "Running"
-hide_streamlit_style = """
-    <style>
-        #MainMenu {visibility: hidden;} /* Hide the three-dot menu */
-        footer {visibility: hidden;} /* Hide Streamlit footer */
-    </style>
-"""
-st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
 # def add_newline_after_block_math(text):
 #     """
@@ -156,7 +146,6 @@ def sanitize_latex(text):
     text = re.sub(r"\\\((.*?)\\\)", r"$\1$", text)
 
     # 3️⃣ Convert block LaTeX `\[ ... \]` → `$$ ... $$`
-    # ✅ Ensure no extra spaces inside `$$ ... $$`
     text = re.sub(r"\s*\\\[\s*(.*?)\s*\\\]\s*", r"\n$$\1$$\n", text, flags=re.DOTALL)
 
 
@@ -168,7 +157,13 @@ def sanitize_latex(text):
     if text.count("$") % 2 != 0:
         text += "$"  # ✅ Auto-close inline math if an odd `$` count is detected
     text = re.sub(r"\*\* \$(.*?)\$ \*\*", r"**$\1$**", text)
-    
+    #text = re.sub(r"\$\$(.*?)\$\$", r"$$\n\1\n$$", text, flags=re.DOTALL)
+    def format_block_math(match):
+        """Ensures block math expressions are formatted correctly."""
+        content = match.group(1).strip()
+        return f"\n$$\n{content}\n$$\n"
+    text = re.sub(r"(\$[^$]+\$)\s*\n?\s*(\$\$)", r"\1\n\2", text)
+    text = re.sub(r"\$\$(.*?)\$\$", format_block_math, text, flags=re.DOTALL)
     return text
 
 
@@ -207,7 +202,7 @@ vectordb = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deseriali
 retriever = vectordb.as_retriever(search_type="similarity", search_kwargs={"k":4})
 
 # Initialize OpenAI model
-llm = ChatOpenAI(model="gpt-4o-mini",api_key=os.environ["OPENAI_API_KEY"], temperature=0.01)
+llm = ChatOpenAI(model="gpt-4o",api_key=os.environ["OPENAI_API_KEY"], temperature=0.01)
 
 contextualize_q_system_prompt = st.secrets["ds120_prompts"]["contextualize_q_system_prompt"]
 qa_prompt_template = st.secrets["ds120_prompts"]["qa_prompt_template"]
@@ -230,7 +225,7 @@ history_aware_retriever = create_history_aware_retriever(
 qa_prompt = ChatPromptTemplate.from_messages(
     [
         ("system", qa_prompt_template),
-        MessagesPlaceholder(variable_name="chat_history"),
+        #MessagesPlaceholder(variable_name="chat_history"),
         ("human", "{input}"),
     ]
 )
@@ -566,6 +561,15 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+# Hide Deploy button and three-dot menu but keep "Running"
+hide_streamlit_style = """
+    <style>
+        #MainMenu {visibility: hidden;} /* Hide the three-dot menu */
+        footer {visibility: hidden;} /* Hide Streamlit footer */
+    </style>
+"""
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
 # Fixed bottom layout for file upload and chat input
 with st.container():
