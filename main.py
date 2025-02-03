@@ -1,54 +1,11 @@
-import os
 import streamlit as st
 from dotenv import load_dotenv
-from langchain_core.prompts import PromptTemplate
-from langchain.embeddings import HuggingFaceEmbeddings
-from langchain_openai import ChatOpenAI
-from langchain_community.vectorstores import FAISS
-from langchain.chains import LLMChain
-from langchain_core.output_parsers import StrOutputParser
-from langchain_core.messages import AIMessage, HumanMessage
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain.chains import create_history_aware_retriever, create_retrieval_chain
-from langchain.chains.combine_documents import create_stuff_documents_chain
-from langsmith import traceable
-from pix2text import Pix2Text
-from pdf2image import convert_from_path
-import PyPDF2
-from pix2text import Pix2Text
-import tempfile
-import tempfile
-import re
-
-
-# Load environment variables
-load_dotenv()
-
-
-os.environ["LANGSMITH_TRACING_V2"] = "true"
-os.environ["LANGSMITH_PROJECT"] = "Tutor"
-
-# Load API keys from secrets.toml
-# Correct key names based on secrets.toml
-openai_key = st.secrets["api_keys"]["OPENAI_API_KEY"]
-langsmith_key = st.secrets["api_keys"]["LANGSMITH_API_KEY"]
-
-os.environ["OPENAI_API_KEY"] = openai_key
-os.environ["LANGSMITH_API_KEY"] = langsmith_key  # Set the LangSmith API key
+from rag import invoke_rag_chain,update_chat_history
+from elements import add_instructions_button , process_uploaded_file , sanitize_latex
 
 # Load prompts from secrets.toml
 contextualize_q_system_prompt = st.secrets["ds120_prompts"]["contextualize_q_system_prompt"]
 qa_prompt_template = st.secrets["ds120_prompts"]["qa_prompt_template"]
-
-
-
-
-
-@traceable
-def invoke_rag_chain(prompt: str, chat_history: list):
-    response = rag_chain.invoke({"input": prompt, "chat_history": chat_history})
-    return response
-
 
 # Initialize session state
 if "messages" not in st.session_state:
@@ -67,6 +24,15 @@ st.set_page_config(
 )
 
 st.markdown("<h1 style='text-align: center;'>DS-120 Virtual Teaching Assistant Chatbot</h1>", unsafe_allow_html=True)
+
+# Hide Deploy button and three-dot menu but keep "Running"
+hide_streamlit_style = """
+    <style>
+        #MainMenu {visibility: hidden;} /* Hide the three-dot menu */
+        footer {visibility: hidden;} /* Hide Streamlit footer */
+    </style>
+"""
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
 # Add an "Instructions" button to the sidebar
 st.markdown(
@@ -91,221 +57,9 @@ st.markdown(
 def disable_callback():
     st.session_state.chat_input = True
 
-def add_newline_after_block_math(text):
-    """
-    Ensures:
-    - Block equations ($$ ... $$) are properly spaced:
-      - A blank line after opening $$
-      - A blank line before closing $$
-      - A blank line after the entire block equation
-    - Markdown headings (#, ##, ###, ####) are correctly separated from other content.
-    - Prevents headings from merging with equations.
-    """
-
-    # ✅ Ensure **a blank line after opening $$ and before closing $$**
-    text = re.sub(r"\$\$(.*?)\$\$", r"$$\n\1\n$$", text, flags=re.DOTALL)
-
-    # ✅ Ensure **at least one blank line after block equations**
-    text = re.sub(r"(\$\$.*?\$\$)(\S)", r"\1\n\n\2", text, flags=re.DOTALL)
-
-    # ✅ Ensure **at least one blank line before Markdown headings**
-    text = re.sub(r"(\$\$.*?\$\$)\s*(#+ )", r"\1\n\n\2", text, flags=re.DOTALL)
-
-    return text
-
-
-# def add_newline_after_block_math(text):
-#     """
-#     Ensures that block math equations (`$$ ... $$`) are always followed by a new line.
-#     - Does NOT add unnecessary new lines if already present.
-#     - Does NOT modify inline math ($...$).
-#     - Works safely alongside `sanitize_latex()`.
-#     """
-
-#     # ✅ Add a newline only if there isn't already one after `$$ ... $$`
-#     text = re.sub(r"(\$\$.*?\$\$)([^\n])", r"\1\n\2", text, flags=re.DOTALL)
-
-#     return text
-
-def sanitize_latex(text):
-    """
-    Step 9: Ensures proper LaTeX formatting for Streamlit Markdown.
-    - Converts \( ... \) to $ ... $ (for inline math).
-    - Converts \[ ... \] to $$ ... $$ (for block math).
-    - Removes unnecessary spaces inside $$ ... $$.
-    - Ensures block math appears on separate lines.
-    - Prevents Streamlit rendering issues by enforcing correct newlines.
-    """
-
-    # 1️⃣ Skip processing if already wrapped in block math
-    stripped_text = text.strip()
-    if stripped_text.startswith("$$") and stripped_text.endswith("$$"):
-        return text  # ✅ Don't modify already formatted block math
-
-    # 2️⃣ Convert inline LaTeX `\( ... \)` → `$ ... $`
-    text = re.sub(r"\\\((.*?)\\\)", r"$\1$", text)
-
-    # 3️⃣ Convert block LaTeX `\[ ... \]` → `$$ ... $$`
-    text = re.sub(r"\s*\\\[\s*(.*?)\s*\\\]\s*", r"\n$$\1$$\n", text, flags=re.DOTALL)
-
-
-    # 5️⃣ Ensure inline math has proper spacing
-    text = re.sub(r"(?<!\s)\$(.*?)\$(?!\s)", r" $\1$ ", text)  # ✅ Prevents missing spaces around math
-
-    # 6️⃣ Ensure matching `$` delimiters (close any unclosed inline math)
-    text = re.sub(r"\$\s+\$", "$$", text)
-    if text.count("$") % 2 != 0:
-        text += "$"  # ✅ Auto-close inline math if an odd `$` count is detected
-    text = re.sub(r"\*\* \$(.*?)\$ \*\*", r"**$\1$**", text)
-    #text = re.sub(r"\$\$(.*?)\$\$", r"$$\n\1\n$$", text, flags=re.DOTALL)
-    def format_block_math(match):
-        """Ensures block math expressions are formatted correctly."""
-        content = match.group(1).strip()
-        return f"\n$$\n{content}\n$$\n"
-    text = re.sub(r"(\$[^$]+\$)\s*\n?\s*(\$\$)", r"\1\n\2", text)
-    text = re.sub(r"\$\$(.*?)\$\$", format_block_math, text, flags=re.DOTALL)
-    return text
-
-
-# Add an "Instructions" button in the sidebar
-def add_instructions_button():
-    # Instructions Button (Opens Info Box)
-    if st.sidebar.button("Instructions", key="instructions_button"):
-        st.sidebar.info(
-            "### Instructions\n"
-            "1. Upload files if needed.\n"
-            "2. Type your question in the input box.\n"
-            "3. Receive a response from the assistant."
-        )
-
-    # Feedback Button (Opens Link)
-    if st.sidebar.button("Feedback", key="feedback_button"):
-        st.sidebar.markdown(
-            '[Click here to provide feedback](https://docs.google.com/forms/d/e/1FAIpQLSfaGG9AL_V0ThQ45mMO1bKDn_gLljhY1kAG1RY_k3E8U1Kefw/viewform)', 
-            unsafe_allow_html=True
-        )
-
 # Call the function to display the button in the sidebar
 add_instructions_button()
 
-
-# Initialize SentenceTransformer model for embeddings
-modelPath = "sentence-transformers/all-MiniLM-l6-v2"
-embeddings = HuggingFaceEmbeddings(
-    model_name=modelPath,
-    model_kwargs={"device": "cpu"},
-    encode_kwargs={"normalize_embeddings": False},
-)
-
-# Load FAISS vector store
-vectordb = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deserialization=True)
-retriever = vectordb.as_retriever(search_type="similarity", search_kwargs={"k":4})
-
-# Initialize OpenAI model
-llm = ChatOpenAI(model="gpt-4o",api_key=os.environ["OPENAI_API_KEY"], temperature=0.01)
-
-contextualize_q_system_prompt = st.secrets["ds120_prompts"]["contextualize_q_system_prompt"]
-qa_prompt_template = st.secrets["ds120_prompts"]["qa_prompt_template"]
-
-# Define contextualize prompt
-contextualize_q_prompt = ChatPromptTemplate.from_messages(
-    [
-        ("system", contextualize_q_system_prompt),
-        MessagesPlaceholder(variable_name="chat_history"),
-        ("human", "{input}"),
-    ]
-)
-
-# Create a history-aware retriever
-history_aware_retriever = create_history_aware_retriever(
-    llm, retriever, contextualize_q_prompt
-)
-
-# Define the question-answering system prompt
-qa_prompt = ChatPromptTemplate.from_messages(
-    [
-        ("system", qa_prompt_template),
-        #MessagesPlaceholder(variable_name="chat_history"),
-        ("human", "{input}"),
-    ]
-)
-
-# Create a question-answer chain
-question_answer_chain = create_stuff_documents_chain(llm, qa_prompt)
-
-# Create a RAG chain
-rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
-
-# Function to manage chat history and keep the latest 5 messages
-def update_chat_history(chat_history, human_message, ai_message):
-    chat_history.extend(
-        [
-            HumanMessage(content=human_message),
-            AIMessage(content=ai_message),
-        ]
-    )
-    # Keep only the last 5 messages
-    if len(chat_history) > 5:
-        chat_history = chat_history[-5:]
-    return chat_history
-
-# Function to process uploaded image and extract text
-def process_uploaded_file(file):
-    try:
-        extracted_text = ""
-
-        if file.type == "application/pdf":
-            # Handle PDF files
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
-                temp_file.write(file.getvalue())
-                temp_file.flush()
-
-                # Try extracting text directly using PyPDF2
-                try:
-                    with open(temp_file.name, "rb") as pdf_file:
-                        reader = PyPDF2.PdfReader(pdf_file)
-                        for page in reader.pages:
-                            extracted_text += page.extract_text() or ""  # Append text if available
-                except Exception as e:
-                    print(f"Text extraction from PDF failed: {e}. Proceeding with image conversion.")
-
-                # If no text was extracted or fallback is needed
-                if not extracted_text.strip():
-                    pages = convert_from_path(temp_file.name, dpi=300)
-                    p2t = Pix2Text.from_config(device="cpu")
-                    for i, page in enumerate(pages):
-                        temp_image_path = f"/tmp/page_{i + 1}.jpg"  # Save temporary images
-                        page.save(temp_image_path, "JPEG")
-                        page_text = p2t.recognize(temp_image_path)
-                        extracted_text += page_text + "\n"
-
-        elif file.type.startswith("image/"):
-            # Handle image files
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp_file:
-                temp_file.write(file.getvalue())
-                temp_file.flush()
-
-                # Extract text from the image using Pix2Text
-                p2t = Pix2Text.from_config(device="cpu")
-                extracted_text = p2t.recognize(temp_file.name)
-
-        else:
-            st.error("Unsupported file type. Please upload an image or a PDF.")
-            return None
-
-        if not extracted_text.strip():
-            st.warning("No text could be extracted from the file.")
-            return None
-
-        return extracted_text.strip()
-
-    except Exception as e:
-        st.error(f"Failed to process the file: {str(e)}")
-        return None
-
-# Define a scrollable main area for chat history and fixed bottom input area
-# chat_container = st.container(height = 500)
-# input_container = st.container()
 
 # Display chat messages in the fixed top area
 with st.container(height = 600):
@@ -313,6 +67,7 @@ with st.container(height = 600):
     with chat_messages:
         for msg in st.session_state.messages:
             st.chat_message(msg["role"]).write(msg["content"])
+            
 
 st.markdown(
     """
@@ -562,14 +317,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Hide Deploy button and three-dot menu but keep "Running"
-hide_streamlit_style = """
-    <style>
-        #MainMenu {visibility: hidden;} /* Hide the three-dot menu */
-        footer {visibility: hidden;} /* Hide Streamlit footer */
-    </style>
-"""
-st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
 # Fixed bottom layout for file upload and chat input
 with st.container():
@@ -584,12 +331,7 @@ with st.container():
         extracted_content = ""
         if uploaded_file:
             extracted_content = process_uploaded_file(uploaded_file)
-
-
-    # Chat input logic
-    # Chat input logic
     
-
     with col2:
             st.markdown('<div class="custom-col">', unsafe_allow_html=True)
             prompt = st.chat_input("Type your question here...", disabled=st.session_state.chat_input, on_submit=disable_callback)
