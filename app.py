@@ -324,13 +324,13 @@ with st.container():
     col1, col2 = st.columns([1, 10])
 
     # File uploader logic
-    with col1:
-        st.markdown('<div class="stFileUploader">', unsafe_allow_html=True)
-        uploaded_file = st.file_uploader(label_visibility="collapsed", label="Upload a file (image or PDF)", key="file_uploader",type = ['png','pdf'])
+    # with col1:
+    #     st.markdown('<div class="stFileUploader">', unsafe_allow_html=True)
+    #     uploaded_file = st.file_uploader(label_visibility="collapsed", label="Upload a file (image or PDF)", key="file_uploader",type = ['png','pdf'])
 
-        extracted_content = ""
-        if uploaded_file:
-            extracted_content = process_uploaded_file(uploaded_file)
+    #     extracted_content = ""
+    #     if uploaded_file:
+    #         extracted_content = process_uploaded_file(uploaded_file)
     
     with col2:
             st.markdown('<div class="custom-col">', unsafe_allow_html=True)
@@ -339,11 +339,11 @@ with st.container():
                 st.session_state.chat_input = True  # Disable input while processing
                 st.session_state["is_processing"] = True
                 # Check if an image is uploaded and extract content
-                if extracted_content:
-                    ui_display_prompt = f"{prompt} \n\n[Attachment]"
-                    prompt = f"{prompt}\n\n{extracted_content}"
-                else:
-                    ui_display_prompt = prompt
+                # if extracted_content:
+                #     ui_display_prompt = f"{prompt} \n\n[Attachment]"
+                #     prompt = f"{prompt}\n\n{extracted_content}"
+                # else:
+                ui_display_prompt = prompt
 
                 # Add user input (with "Attachment" if applicable) to the message history
                 st.session_state.messages.append({"role": "user", "content": ui_display_prompt})
