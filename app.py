@@ -1,6 +1,6 @@
 import streamlit as st
 from dotenv import load_dotenv
-from rag import invoke_rag_chain,update_chat_history
+from rag import invoke_dspy_chain,update_chat_history
 from elements import add_instructions_button , process_uploaded_file , sanitize_latex
 
 # Load prompts from secrets.toml
@@ -23,7 +23,17 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-st.markdown("<h1 style='text-align: center;'>DS-120 Virtual Teaching Assistant Chatbot</h1>", unsafe_allow_html=True)
+# Fixed title at the top
+st.markdown(
+    """
+    <h1 class="fixed-title">DS-120 Virtual Teaching Assistant Chatbot</h1>
+    """,
+    unsafe_allow_html=True
+)
+st.markdown('<div class="content-container">', unsafe_allow_html=True)
+
+# Chat history container (Scrollable only when needed)
+st.markdown('<div class="chat-container">', unsafe_allow_html=True)
 
 # Hide Deploy button and three-dot menu but keep "Running"
 hide_streamlit_style = """
@@ -62,12 +72,49 @@ add_instructions_button()
 
 
 # Display chat messages in the fixed top area
-with st.container(height = 600):
+with st.container():
     chat_messages = st.container()
     with chat_messages:
         for msg in st.session_state.messages:
             st.chat_message(msg["role"]).write(msg["content"])
             
+
+st.markdown(
+    """
+    <style>
+    /* Fix the title at the top and make it fully visible */
+    .fixed-title {
+        position: fixed;
+        top: 50px;  /* Move it further down */
+        left: 50%;
+        transform: translateX(-50%);
+        width: 100%;
+        background: rgba(13, 17, 24, 255); /* Match background */
+        color: white;
+        text-align: center;
+        padding: 20px 0; /* More padding for clear visibility */
+        z-index: 1000; /* Keeps it above everything */
+        font-size: 24px; /* Increase font size for readability */
+        font-weight: bold;
+        box-shadow: 0px 4px 6px rgba(0, 0, 0, 0.1);
+    }
+
+    /* Push content further down below the fixed title */
+    .content-container {
+        padding-top: 100px; /* Adjust this based on title height */
+    }
+
+    /* Chat history container - Scroll only when needed */
+    .chat-container {
+        max-height: 70vh; /* Limits max height */
+        overflow-y: auto; /* Enables scroll only if needed */
+        padding: 10px;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 
 st.markdown(
     """
@@ -324,13 +371,13 @@ with st.container():
     col1, col2 = st.columns([1, 10])
 
     # File uploader logic
-    # with col1:
-    #     st.markdown('<div class="stFileUploader">', unsafe_allow_html=True)
-    #     uploaded_file = st.file_uploader(label_visibility="collapsed", label="Upload a file (image or PDF)", key="file_uploader",type = ['png','pdf'])
+    with col1:
+        st.markdown('<div class="stFileUploader">', unsafe_allow_html=True)
+        uploaded_file = st.file_uploader(label_visibility="collapsed", label="Upload a file (image or PDF)", key="file_uploader",type = ['png','pdf'])
 
-    #     extracted_content = ""
-    #     if uploaded_file:
-    #         extracted_content = process_uploaded_file(uploaded_file)
+        extracted_content = ""
+        if uploaded_file:
+            extracted_content = process_uploaded_file(uploaded_file)
     
     with col2:
             st.markdown('<div class="custom-col">', unsafe_allow_html=True)
@@ -339,11 +386,11 @@ with st.container():
                 st.session_state.chat_input = True  # Disable input while processing
                 st.session_state["is_processing"] = True
                 # Check if an image is uploaded and extract content
-                # if extracted_content:
-                #     ui_display_prompt = f"{prompt} \n\n[Attachment]"
-                #     prompt = f"{prompt}\n\n{extracted_content}"
-                # else:
-                ui_display_prompt = prompt
+                if extracted_content:
+                    ui_display_prompt = f"{prompt} \n\n[Attachment]"
+                    prompt = f"{prompt}\n\n{extracted_content}"
+                else:
+                    ui_display_prompt = prompt
 
                 # Add user input (with "Attachment" if applicable) to the message history
                 st.session_state.messages.append({"role": "user", "content": ui_display_prompt})
@@ -358,13 +405,13 @@ with st.container():
                     with response_placeholder:
                         with st.spinner("Thinking..."):
                             try:
-                                response = invoke_rag_chain(prompt, st.session_state.chat_history)
-                                response_text = response["answer"]
+                                response = invoke_dspy_chain(prompt, st.session_state.chat_history)
+                                response_text = response
                                 response_text = sanitize_latex(response_text)
                                 #response_text = add_newline_after_block_math(response_text)
-                                print("\n===== RAW SANITIZED OUTPUT =====\n")
-                                print(response_text)
-                                print("\n===============================\n")
+                                # print("\n===== RAW SANITIZED OUTPUT =====\n")
+                                # print(response_text)
+                                # print("\n===============================\n")
                             except Exception as e:
                                 response_text = f"An error occurred: {str(e)}"
 

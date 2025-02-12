@@ -19,3 +19,5 @@ datasets
 pix2text
 PyPDF2
 pdf2image
+dspy
+
